@@ -1,0 +1,51 @@
+html,body{
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    color: black;
+}
+
+#import{
+    position: absolute;
+    left: 0;
+    width:400px;
+    bottom: 0;
+    top:0;
+    padding: 5px;
+}
+
+#right {
+    position: absolute;
+
+    left: 450px;
+    right : 0px;
+    padding : 25px;
+    
+}
+#origine h4, #destination h4 {
+    margin: 0;
+    padding: 3px;
+}
+textarea
+{
+  font-size: 12px;
+  border:1px solid #999999;
+  width:100%;
+}
+textarea:disabled{
+     background: white; 
+}
+.drop-box {
+    background: #F8F8F8;
+    border: 3px dashed #DDD;
+    width: 200px;
+    height: 65px;
+    text-align: center;
+    padding-top: 25px;
+    margin: 10px;
+    cursor: pointer;
+}
+.dragover {
+    border: 5px dashed black;
+    background-color: white;
+}
