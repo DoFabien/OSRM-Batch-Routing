@@ -71,7 +71,9 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
         var rows = str_full.split('\n');
         for (var i = 1; i < rows.length; i++) {
             var row = rows[i].split($scope.separateur);
-            $scope.data_src.push(row);
+            if (row.length == $scope.fields.length){
+                 $scope.data_src.push(row);
+            } 
         }
     }
 
