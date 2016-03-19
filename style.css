@@ -3,6 +3,7 @@ html,body{
     height: 100%;
     padding: 0;
     color: black;
+    background-color: white;
 }
 
 #import{
@@ -33,7 +34,7 @@ textarea
   width:100%;
 }
 textarea:disabled{
-     background: white; 
+     background: #FAFAFA; 
 }
 .drop-box {
     background: #F8F8F8;

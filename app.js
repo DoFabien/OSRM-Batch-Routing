@@ -85,8 +85,8 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
         for (var i = start_ind; i < max_ind; i++) {
        
             var current_row = $scope.data_src[i];
-            var dep = current_row[$scope.fields.indexOf($scope.origine.y)].trim() + ',' + current_row[$scope.fields.indexOf($scope.origine.x)].trim();
-            var dest = current_row[$scope.fields.indexOf($scope.destination.y)].trim() + ',' + current_row[$scope.fields.indexOf($scope.destination.x)].trim();
+            var dep = parseFloat(current_row[$scope.fields.indexOf($scope.origine.y)].replace(',','.')) + ',' + parseFloat(current_row[$scope.fields.indexOf($scope.origine.x)].replace(',','.'));
+            var dest = parseFloat(current_row[$scope.fields.indexOf($scope.destination.y)].replace(',','.')) + ',' + parseFloat(current_row[$scope.fields.indexOf($scope.destination.x)].replace(',','.'));
 
 
             Fctory.getIti(dep, dest, current_row, function(data) {
@@ -126,7 +126,7 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
 
     }
 
-    $scope.calculItis = function(str_full) {
+    $scope.calculItis = function() {
         if (!$scope.origine.y || !$scope.origine.x || !$scope.destination.x || !$scope.destination.y) {
             alert('Renseignez les 4 champs!')
             return
@@ -141,11 +141,7 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
             calculPartItis(0);
         })
         $scope.start = new Date().getTime();
-
         $scope.n_progress = 0;
-        var data_test = [];
-
-
     }
 
     $scope.export_ok = function() {
