@@ -6,7 +6,9 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=RobotoDraft:300,400,500,700,400italic">
     <link rel="stylesheet" href="style.css" />
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
-    <script>(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)})(window,document,'script','//www.google-analytics.com/analytics.js','ga');ga('create', 'UA-31677169-1', 'auto');ga('send', 'pageview');</script>
+    <script>
+        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)})(window,document,'script','//www.google-analytics.com/analytics.js','ga');ga('create', 'UA-31677169-1', 'auto');ga('send', 'pageview');
+    </script>
     <meta name="viewport" content="initial-scale=1" />
     <meta charset="utf-8" />
 </head>
@@ -15,6 +17,9 @@
     <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular-animate.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.15/angular-aria.min.js"></script>
+    
+    <script src="lib/proj4.js"></script>
+
     <script src="lib/FileSaver.js"></script>
 
     <script src="lib/ng-file-upload-shim.min.js"></script>
@@ -28,25 +33,36 @@
 
 
     <div id="import">
-        <h2 style="margin:10px;">Import des données</h2> 
+        <h2 style="margin:10px;">Import des données</h2>
         <div layout="row">
-            <div ng-disabled="isRunning" ngf-drop="uploadFile($file, $invalidFiles)" ngf-select="uploadFile($file, $invalidFiles)" class="drop-box" ngf-drag-over-class="'dragover'"
-            ngf-multiple="false">Importer le fichier</div>
+            <div ng-disabled="isRunning" ngf-drop="uploadFile($file, $invalidFiles)" ngf-select="uploadFile($file, $invalidFiles)" class="drop-box"
+            ngf-drag-over-class="'dragover'" ngf-multiple="false">Importer le fichier</div>
 
-            <md-input-container style="margin-right: 10px;">
-                <label>Encodage du fichier</label>
-                <md-select ng-disabled="isRunning" ng-change="encodageChange()"ng-model="encodage" style="width:150px;">
-                    <md-option value="UTF-8">UTF-8</md-option>
-                    <md-option value="ISO-8859-1">ISO-8859-1</md-option>
-                </md-select>
-            </md-input-container>
+            <div layout="column">
+                <md-input-container style="margin-right: 10px;">
+                    <label>Encodage du fichier</label>
+                    <md-select ng-disabled="isRunning" ng-change="encodageChange()" ng-model="encodage" style="width:150px;">
+                        <md-option value="UTF-8">UTF-8</md-option>
+                        <md-option value="ISO-8859-1">ISO-8859-1</md-option>
+                    </md-select>
+                </md-input-container>
+
+                <md-input-container style="margin-right: 10px;">
+                    <label>Projection des données</label>
+                    <md-select ng-disabled="isRunning" ng-model="projection" style="width:150px;">
+                         <md-option ng-value="projection" ng-repeat="projection in projections">{{ projection.code}}</md-option>
+                    </md-select>
+                </md-input-container>
+
+
+            </div>
 
         </div>
         <h4>Aperçu des données  ({{data_src.length}}) </h4>
         <textarea ng-model="summary" cols="35" rows="11" ng-disabled="true"></textarea>
 
     </div>
-    
+
     <div id="right">
         <div layout="row">
             <div id="origine">
@@ -98,19 +114,20 @@
         </div>
 
         <label for="precision">Précision de la géométrie</label>
-        <input ng-disabled="isRunning" id="precision" min="0" max="18" type="number" ng-model="z_geom" aria-label="précision de la géométrie" aria-controls="z_geom">
+        <input ng-disabled="isRunning" id="precision" min="0" max="18" type="number" ng-model="z_geom" aria-label="précision de la géométrie"
+        aria-controls="z_geom">
 
         <div layout="column">
             <h4>Calculer les itinéraires</h4>
             <md-button ng-disabled="isRunning || !data_src" class="md-raised md-primary" ng-click="calculItis()"> Calculer </md-button>
 
         </div>
-        
+
         <div layout="row">
             <md-progress-linear md-mode="determinate" value="{{progress}}"></md-progress-linear>
-             <label> {{progress +'%'}} </label>
+            <label> {{progress +'%'}} </label>
         </div>
-        
+
         <md-button ng-disabled="!isCompleted" class="md-raised" ng-click="export_ok()"> Exporter en GEOJSON </md-button> {{iti_ok}} Itinéraires calculés
         <br>
         <div ng-if="iti_ko > 0">
@@ -119,4 +136,5 @@
 
     </div>
 </body>
+
 </html>

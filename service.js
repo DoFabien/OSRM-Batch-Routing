@@ -25,10 +25,22 @@ app.factory('Fctory', function() {
             });
         },
         getSession: function(callback) {
-            console.log('dudu');
             $.ajax({
                 type: "GET",
                 url: 'php/session.php',
+                dataType: 'json',
+                success: function(data) {
+                    return callback(data);
+                },
+                error: function(er) {
+                    return er;
+                }
+            });
+        },
+        getProjections : function(callback){
+               $.ajax({
+                type: "GET",
+                url: './projections.json',
                 dataType: 'json',
                 success: function(data) {
                     return callback(data);

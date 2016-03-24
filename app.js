@@ -16,11 +16,20 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
     $scope.encodage = 'UTF-8';
     $scope.isRunning = false;
     $scope.isCompleted = false;
+    $scope.projections = [];
 
 
     $scope.uploadFile = function(_file, errFiles) {
         $scope.file = _file;
         $scope.loadFile();
+    }
+    
+    $scope.getProjections = function(){
+        Fctory.getProjections(function(projs){
+             $scope.projections = projs;
+             $scope.projection = projs[0];
+             $scope.$apply();
+        });
     }
 
     $scope.loadFile = function() {
@@ -82,11 +91,27 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
     var calculPartItis = function(start_ind) {
         var max_ind = ($scope.data_src.length > start_ind + nb_req_limit) ? start_ind + nb_req_limit : $scope.data_src.length;
         var current_ind = start_ind;
+        var proj4326 = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs";
+        
         for (var i = start_ind; i < max_ind; i++) {
        
             var current_row = $scope.data_src[i];
-            var dep = parseFloat(current_row[$scope.fields.indexOf($scope.origine.y)].replace(',','.')) + ',' + parseFloat(current_row[$scope.fields.indexOf($scope.origine.x)].replace(',','.'));
-            var dest = parseFloat(current_row[$scope.fields.indexOf($scope.destination.y)].replace(',','.')) + ',' + parseFloat(current_row[$scope.fields.indexOf($scope.destination.x)].replace(',','.'));
+            var dep_x = parseFloat(current_row[$scope.fields.indexOf($scope.origine.x)].replace(',','.'));
+            var dep_y = parseFloat(current_row[$scope.fields.indexOf($scope.origine.y)].replace(',','.'));
+            var dest_x = parseFloat(current_row[$scope.fields.indexOf($scope.destination.x)].replace(',','.'));
+            var dest_y = parseFloat(current_row[$scope.fields.indexOf($scope.destination.y)].replace(',','.'));;
+            
+            var dep = dep_y + ',' + dep_x;
+            var dest = dest_y + ',' + dest_x;
+
+            
+            if ($scope.projection.code != 'EPSG:4326'){
+               var dep_4326= proj4($scope.projection.proj4, proj4326, [dep_x,dep_y]);
+               var dest_4326= proj4($scope.projection.proj4, proj4326, [dest_x,dest_y]);
+               
+               dep = dep_4326[1] + ','+dep_4326[0];
+               dest = dest_4326[1] + ','+dest_4326[0];
+            }
 
 
             Fctory.getIti(dep, dest, current_row, function(data) {
@@ -155,4 +180,8 @@ app.controller('MainCtrl', function($scope, $window, Fctory, Upload) {
         });
         saveAs(blob, "errors.csv");
     }
+    
+    
+    //init
+$scope.getProjections();
 });
