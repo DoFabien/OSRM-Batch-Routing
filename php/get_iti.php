@@ -24,7 +24,7 @@ if (isset ($res_array['status'])) {
         if ($res_array['status'] == 0 || $res_array['status'] == 200){ //=>ok!
             $res_route_summary = $res_array['route_summary'];
             $res_route_geometry = $res_array['route_geometry'];
-        
+
             for ($i=0;$i<Count($res_route_geometry);$i++){
                 $res_route_geometry[$i] = '['.$res_route_geometry[$i][1] .','.$res_route_geometry[$i][0].']';
             }
@@ -35,13 +35,13 @@ if (isset ($res_array['status'])) {
 
             $feature_geometry = '"geometry": {"type": "LineString","coordinates":[' .$coord_str.']}';
             $properties = '"properties": ' .json_encode($prop, JSON_UNESCAPED_SLASHES) . '';
-            
-            if ($_SESSION["rows_remaining"] >0){
-                $feature =  '{"type": "Feature",'.$feature_geometry.','.$properties . '},'.CHR(13);
+            if ($_SESSION["count"] == 0) { // => 1ere ligne, pas de virgule devant
+                 $feature =  '{"type": "Feature",'.$feature_geometry.','.$properties . '}'.CHR(13);
+            } else {
+                 $feature =  ',{"type": "Feature",'.$feature_geometry.','.$properties . '}'.CHR(13);
             }
-            else{
-                $feature =  '{"type": "Feature",'.$feature_geometry.','.$properties . '}'.CHR(13) .']}';
-            }
+
+            $_SESSION["count"] = $_SESSION["count"] + 1;
         
             $fp = fopen($path_file, 'a+');
             fwrite($fp, $feature);
@@ -56,6 +56,12 @@ if (isset ($res_array['status'])) {
 else{ //ko
         echo json_encode(["status"=>-1, "data"=>$data]); 
     }
+
+if ($_SESSION["rows_remaining"] == 0){
+    $fp = fopen($path_file, 'a+');
+    fwrite($fp, CHR(13) .']}');
+    fclose($fp);
+} 
 
 ?>
 
