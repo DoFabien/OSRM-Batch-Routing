@@ -15,42 +15,42 @@ include_once('config.php');
         $prop[$_SESSION["fields"][$i]] = $data[$i];
     }
 
-    $url = $osrm_url.'/viaroute?loc='.$dep.'&loc='.$dest.'?compression=false?alt=false?z='.$z; 
-    
+    $depCoords = explode(',',$dep);
+    $destCoords = explode(',',$dest);
+    $url = $osrm_url."/route/v1/driving/$depCoords[1],$depCoords[0];$destCoords[1],$destCoords[0]?geometries=geojson";
+
     $res = file_get_contents($url);
     $_SESSION["rows_remaining"] = $_SESSION["rows_remaining"] -1;
     $res_array = json_decode ($res,true);
-if (isset ($res_array['status'])) {
-        if ($res_array['status'] == 0 || $res_array['status'] == 200){ //=>ok!
-            $res_route_summary = $res_array['route_summary'];
-            $res_route_geometry = $res_array['route_geometry'];
 
-            for ($i=0;$i<Count($res_route_geometry);$i++){
-                $res_route_geometry[$i] = '['.$res_route_geometry[$i][1] .','.$res_route_geometry[$i][0].']';
-            }
-            $coord_str = implode(',',$res_route_geometry); 
+if (isset ($res_array['code'])) {
+        if ($res_array['code'] == 'Ok'){
+            $route = $res_array['routes'][0];
 
-            $prop['_total_distance'] = $res_route_summary['total_distance'];
-            $prop['_total_time'] = $res_route_summary['total_time'];
+            $feature_geometry = $route['geometry'];
+            
+            $feature = [];
+            $feature['type'] = "Feature";
+            $feature['geometry'] = $route['geometry'];
+            $feature['properties'] = [];
+            $feature['properties']['_total_distance'] = $route['distance'];
+            $feature['properties']['_total_time'] = $route['duration'];
 
-            $feature_geometry = '"geometry": {"type": "LineString","coordinates":[' .$coord_str.']}';
-            $properties = '"properties": ' .json_encode($prop, JSON_UNESCAPED_SLASHES) . '';
             if ($_SESSION["count"] == 0) { // => 1ere ligne, pas de virgule devant
-                 $feature =  '{"type": "Feature",'.$feature_geometry.','.$properties . '}'.CHR(13);
+                 $featureStr =  json_encode($feature) . CHR(13);
             } else {
-                 $feature =  ',{"type": "Feature",'.$feature_geometry.','.$properties . '}'.CHR(13);
+                 $featureStr =  ',' . json_encode($feature) . CHR(13);
             }
-
+            
             $_SESSION["count"] = $_SESSION["count"] + 1;
-        
             $fp = fopen($path_file, 'a+');
-            fwrite($fp, $feature);
+            fwrite($fp, $featureStr);
             fclose($fp);
-            echo json_encode(["status"=>$res_array['status'], "data"=>null]);
+            echo json_encode(["status"=>200, "data"=>null]);
         }
 
         else{ //ko
-            echo json_encode(["status"=>$res_array['status'], "data"=>$data]); 
+            echo json_encode(["status"=>-1, "data"=>$data]); 
         }
 }
 else{ //ko
