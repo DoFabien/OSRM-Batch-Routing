@@ -10,7 +10,7 @@ include_once('config.php');
         $z=18;
     }
     
-    $porp = Array();
+    $prop = Array();
     for ($i = 0; $i < count($_SESSION["fields"]); $i++){
         $prop[$_SESSION["fields"][$i]] = $data[$i];
     }
@@ -32,7 +32,7 @@ if (isset ($res_array['code'])) {
             $feature = [];
             $feature['type'] = "Feature";
             $feature['geometry'] = $route['geometry'];
-            $feature['properties'] = [];
+            $feature['properties'] = $prop ;
             $feature['properties']['_total_distance'] = $route['distance'];
             $feature['properties']['_total_time'] = $route['duration'];
 
