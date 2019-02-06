@@ -17,7 +17,7 @@ include_once('config.php');
 
     $depCoords = explode(',',$dep);
     $destCoords = explode(',',$dest);
-    $url = $osrm_url."/route/v1/driving/$depCoords[1],$depCoords[0];$destCoords[1],$destCoords[0]?geometries=geojson";
+    $url = $osrm_url."/route/v1/driving/$depCoords[1],$depCoords[0];$destCoords[1],$destCoords[0]?geometries=geojson&overview=full";
 
     $res = file_get_contents($url);
     $_SESSION["rows_remaining"] = $_SESSION["rows_remaining"] -1;
