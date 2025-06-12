@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # OSRM Backend Service
+  osrm:
+    build:
+      context: .
+      dockerfile: Dockerfile.osrm
+    container_name: osrm-backend
+    volumes:
+      - ${HOST_OSRM_DATA_DIR:-./osrm-data}:/data
+    command: >
+      sh -c "
+        /init-osrm-data.sh &&
+        osrm-routed --algorithm mld /data/france-latest.osrm
+      "
+    networks:
+      - osrm-network
+      - npm_network
+    restart: unless-stopped
+
+  # Application Service (Node.js + Angular)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: osrm-batch-routing
+    ports:
+      - "8888:80"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - OSRM_URL=${OSRM_URL:-http://osrm:5000}
+      - PORT=${PORT:-80}
+      - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
+      - LOG_DIR=${LOG_DIR:-/app/logs}
+      - RESULTS_DIR=${RESULTS_DIR:-/app/results}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-52428800}
+      - MAX_FILES_KEPT=${MAX_FILES_KEPT:-50}
+      - MAX_JOBS_KEPT=${MAX_JOBS_KEPT:-100}
+      - MAX_RESULTS_KEPT=${MAX_RESULTS_KEPT:-100}
+      - FILE_CLEANUP_INTERVAL=${FILE_CLEANUP_INTERVAL:-24}
+    volumes:
+      - ${HOST_UPLOAD_DIR:-./uploads}:/app/uploads
+      - ${HOST_LOG_DIR:-./logs}:/app/logs
+      - ${HOST_RESULTS_DIR:-./results}:/app/results
+    depends_on:
+      - osrm
+    networks:
+      - osrm-network
+      - npm_network
+    restart: unless-stopped
+
+networks:
+  osrm-network:
+    driver: bridge
+  npm_network:
+    external: true
+
+volumes:
+  osrm-data:
+  uploads:
+  logs:

@@ -1,0 +1,68 @@
+{
+  "name": "osrm-batch-routing-backend",
+  "version": "2.0.0",
+  "description": "Node.js TypeScript backend for OSRM Batch Routing",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "csvtojson": "^2.0.10",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "module-alias": "^2.2.3",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "proj4": "^2.9.2",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/geojson": "^7946.0.16",
+    "@types/jest": "^29.5.8",
+    "@types/morgan": "^1.9.9",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.10.4",
+    "@types/proj4": "^2.5.6",
+    "@types/uuid": "^9.0.7",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.1.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "osrm",
+    "routing",
+    "nodejs",
+    "typescript",
+    "express",
+    "api"
+  ],
+  "author": "OSRM Batch Routing Team",
+  "license": "MIT",
+  "_moduleAliases": {
+    "@": "./dist"
+  }
+}

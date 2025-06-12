@@ -1,0 +1,60 @@
+<div class="app-container">
+  <mat-toolbar color="primary">
+    <mat-icon>route</mat-icon>
+    <span>{{ title }}</span>
+  </mat-toolbar>
+
+  <div class="main-content">
+    <mat-stepper #stepper [selectedIndex]="currentStep" linear>
+      <mat-step label="Upload File" [completed]="!!uploadedFile">
+        <div class="step-content">
+          <app-file-upload (fileUploaded)="onFileUploaded($event)"></app-file-upload>
+        </div>
+        <div class="stepper-actions">
+          <button mat-button matStepperNext [disabled]="!uploadedFile">
+            <mat-icon>arrow_forward</mat-icon>
+            Next: Configure Routing
+          </button>
+        </div>
+      </mat-step>
+
+      <mat-step label="Configure Routing" [completed]="!!currentJobId">
+        <div class="step-content">
+          <app-routing-config 
+            [fileData]="uploadedFile"
+            (jobStarted)="onJobStarted($event)">
+          </app-routing-config>
+        </div>
+        <div class="stepper-actions">
+          <button mat-button matStepperPrevious>
+            <mat-icon>arrow_back</mat-icon>
+            Back
+          </button>
+          <button mat-button matStepperNext [disabled]="!currentJobId">
+            <mat-icon>arrow_forward</mat-icon>
+            Next: Monitor Job
+          </button>
+        </div>
+      </mat-step>
+
+      <mat-step label="Monitor Job">
+        <div class="step-content">
+          <app-job-monitor [jobId]="currentJobId"></app-job-monitor>
+        </div>
+        <div class="stepper-actions">
+          <button mat-button matStepperPrevious>
+            <mat-icon>arrow_back</mat-icon>
+            Back
+          </button>
+          <button mat-button color="primary" (click)="resetApplication()">
+            <mat-icon>refresh</mat-icon>
+            Start New Job
+          </button>
+        </div>
+      </mat-step>
+    </mat-stepper>
+  </div>
+
+</div>
+
+<router-outlet />
