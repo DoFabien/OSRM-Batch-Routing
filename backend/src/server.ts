@@ -30,10 +30,10 @@ app.use(helmet({
   },
 }));
 
-// Rate limiting
+// Rate limiting - Increased for batch processing
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // Increased to 1000 requests per windowMs for batch operations
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
@@ -74,14 +74,58 @@ app.use(errorHandler);
 // Create HTTP server
 const server = createServer(app);
 
+// Configure server timeouts for long-running batch jobs
+const JOB_TIMEOUT = parseInt(process.env['JOB_TIMEOUT'] || '3600000'); // 1 hour default
+server.timeout = JOB_TIMEOUT; // Increase timeout for long batch jobs
+server.keepAliveTimeout = JOB_TIMEOUT + 5000; // Keep alive slightly longer
+server.headersTimeout = JOB_TIMEOUT + 10000; // Headers timeout
+
 // Setup WebSocket server for real-time updates
 const wss = new WebSocketServer({ server });
+
+// Track client subscriptions to jobs
+const jobSubscriptions = new Map<string, Set<any>>();
 
 wss.on('connection', (ws) => {
   logger.info('WebSocket client connected');
   
+  // Handle subscription messages
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      
+      if (message.type === 'subscribe' && message.jobId) {
+        // Subscribe client to job updates
+        if (!jobSubscriptions.has(message.jobId)) {
+          jobSubscriptions.set(message.jobId, new Set());
+        }
+        jobSubscriptions.get(message.jobId)!.add(ws);
+        logger.info(`Client subscribed to job: ${message.jobId}`);
+      } else if (message.type === 'unsubscribe' && message.jobId) {
+        // Unsubscribe client from job updates
+        const subscribers = jobSubscriptions.get(message.jobId);
+        if (subscribers) {
+          subscribers.delete(ws);
+          if (subscribers.size === 0) {
+            jobSubscriptions.delete(message.jobId);
+          }
+        }
+        logger.info(`Client unsubscribed from job: ${message.jobId}`);
+      }
+    } catch (error) {
+      logger.error('Error parsing WebSocket message:', error);
+    }
+  });
+  
   ws.on('close', () => {
     logger.info('WebSocket client disconnected');
+    // Clean up subscriptions for this client
+    for (const [jobId, subscribers] of jobSubscriptions.entries()) {
+      subscribers.delete(ws);
+      if (subscribers.size === 0) {
+        jobSubscriptions.delete(jobId);
+      }
+    }
   });
   
   ws.on('error', (error) => {
@@ -89,11 +133,47 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Make WebSocket server available globally for job updates
+// Make WebSocket server and subscriptions available globally for job updates
 declare global {
   var webSocketServer: WebSocketServer;
+  var jobSubscriptions: Map<string, Set<any>>;
+  function broadcastJobUpdate(jobId: string, data: any): void;
 }
 global.webSocketServer = wss;
+global.jobSubscriptions = jobSubscriptions;
+
+// Global function to broadcast job updates
+global.broadcastJobUpdate = (jobId: string, data: any) => {
+  const subscribers = jobSubscriptions.get(jobId);
+  if (subscribers && subscribers.size > 0) {
+    const message = JSON.stringify({
+      type: 'job_update',
+      jobId: jobId,
+      data: data
+    });
+    
+    // Send to all subscribers of this job
+    for (const client of subscribers) {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        try {
+          client.send(message);
+        } catch (error) {
+          logger.error(`Error sending WebSocket message to client:`, error);
+          // Remove client if send fails
+          subscribers.delete(client);
+        }
+      } else {
+        // Remove disconnected clients
+        subscribers.delete(client);
+      }
+    }
+    
+    // Clean up if no more subscribers
+    if (subscribers.size === 0) {
+      jobSubscriptions.delete(jobId);
+    }
+  }
+};
 
 // Start server
 server.listen(PORT, () => {

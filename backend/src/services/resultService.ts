@@ -2,7 +2,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { createWriteStream } from 'fs';
 import { logger } from '@/utils/logger';
-import type { RouteResult, BatchResult } from '@/types';
+import type { RouteResult, BatchResult, RouteConfiguration, BatchJob } from '@/types';
+import type { LineString } from 'geojson';
 
 export class ResultService {
   private readonly resultsDir = process.env['RESULTS_DIR'] || './results';
@@ -27,7 +28,7 @@ export class ResultService {
   /**
    * Save GeoJSON results to disk using streaming
    */
-  async saveGeoJSONResults(jobId: string, results: RouteResult[], summary: any): Promise<string> {
+  async saveGeoJSONResults(jobId: string, results: RouteResult[], summary: any, configuration?: RouteConfiguration, job?: BatchJob): Promise<string> {
     const filename = `routing_results_${jobId}.geojson`;
     const filePath = path.join(this.resultsDir, filename);
 
@@ -51,9 +52,22 @@ export class ResultService {
             writeStream.write(',\n');
           }
 
+          // Determine geometry based on configuration
+          let geometry = result.route.geometry;
+          
+          const geometryOptions = configuration?.geometryOptions;
+          
+          if (geometryOptions?.straightLineGeometry) {
+            // Create straight line geometry from start to end point
+            geometry = this.createStraightLineGeometry(result.route.geometry);
+          } else if (geometryOptions?.simplifyGeometry && geometryOptions.simplificationTolerance) {
+            // Simplify the geometry using tolerance
+            geometry = this.simplifyGeometry(result.route.geometry, geometryOptions.simplificationTolerance);
+          }
+
           const feature = {
             type: 'Feature',
-            geometry: result.route.geometry,
+            geometry: geometryOptions?.exportGeometry !== false ? geometry : null,
             properties: {
               ...result.originalData,
               distance: result.route.distance,
@@ -75,14 +89,37 @@ export class ResultService {
         }
       }
 
+      // Calculate job execution duration
+      let jobDuration = 0;
+      let jobDurationSeconds = 0;
+      if (job?.startedAt) {
+        const endTime = job.completedAt || new Date();
+        jobDuration = endTime.getTime() - job.startedAt.getTime();
+        jobDurationSeconds = Math.round(jobDuration / 1000);
+      }
+
       // Close features array and add metadata
       writeStream.write('\n  ],\n');
       writeStream.write('  "metadata": {\n');
       writeStream.write(`    "jobId": "${jobId}",\n`);
       writeStream.write('    "summary": ' + JSON.stringify(summary, null, 4).split('\n').map(line => '    ' + line).join('\n') + ',\n');
       writeStream.write(`    "generatedAt": "${new Date().toISOString()}",\n`);
-      writeStream.write(`    "totalFeatures": ${featureCount}\n`);
-      writeStream.write('  }\n');
+      writeStream.write(`    "totalFeatures": ${featureCount}`);
+      
+      // Add job timing information
+      if (job?.startedAt) {
+        writeStream.write(',\n');
+        writeStream.write(`    "jobStartedAt": "${job.startedAt.toISOString()}"`);
+        if (job.completedAt) {
+          writeStream.write(',\n');
+          writeStream.write(`    "jobCompletedAt": "${job.completedAt.toISOString()}"`);
+        }
+        writeStream.write(',\n');
+        writeStream.write(`    "jobDurationMs": ${jobDuration},\n`);
+        writeStream.write(`    "jobDurationSeconds": ${jobDurationSeconds}`);
+      }
+      
+      writeStream.write('\n  }\n');
       writeStream.write('}\n');
 
       // Close the stream and wait for completion
@@ -101,6 +138,7 @@ export class ResultService {
         jobId,
         features: featureCount,
         fileSizeMB: `${fileSizeMB}MB`,
+        jobDurationSeconds,
         path: filePath
       });
 
@@ -115,6 +153,114 @@ export class ResultService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Create straight line geometry from start to end point
+   */
+  private createStraightLineGeometry(originalGeometry: LineString): LineString {
+    if (!originalGeometry.coordinates || originalGeometry.coordinates.length < 2) {
+      return originalGeometry;
+    }
+    
+    const startPoint = originalGeometry.coordinates[0];
+    const endPoint = originalGeometry.coordinates[originalGeometry.coordinates.length - 1];
+    
+    return {
+      type: 'LineString',
+      coordinates: [startPoint, endPoint]
+    };
+  }
+
+  /**
+   * Simplify geometry using Douglas-Peucker algorithm
+   */
+  private simplifyGeometry(originalGeometry: LineString, tolerance: number): LineString {
+    if (!originalGeometry.coordinates || originalGeometry.coordinates.length < 3) {
+      return originalGeometry;
+    }
+    
+    const simplified = this.douglasPeucker(originalGeometry.coordinates, tolerance);
+    
+    return {
+      type: 'LineString',
+      coordinates: simplified
+    };
+  }
+
+  /**
+   * Douglas-Peucker line simplification algorithm
+   */
+  private douglasPeucker(points: number[][], tolerance: number): number[][] {
+    if (points.length <= 2) {
+      return points;
+    }
+
+    let maxDistance = 0;
+    let maxIndex = 0;
+    const startPoint = points[0];
+    const endPoint = points[points.length - 1];
+
+    // Find the point with maximum distance from the line between start and end
+    for (let i = 1; i < points.length - 1; i++) {
+      const distance = this.pointToLineDistance(points[i], startPoint, endPoint);
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        maxIndex = i;
+      }
+    }
+
+    // If max distance is greater than tolerance, recursively simplify
+    if (maxDistance > tolerance) {
+      const leftPoints = this.douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
+      const rightPoints = this.douglasPeucker(points.slice(maxIndex), tolerance);
+      
+      // Combine results (remove duplicate point at junction)
+      return leftPoints.slice(0, -1).concat(rightPoints);
+    } else {
+      // Return just start and end points
+      return [startPoint, endPoint];
+    }
+  }
+
+  /**
+   * Calculate perpendicular distance from point to line
+   */
+  private pointToLineDistance(point: number[], lineStart: number[], lineEnd: number[]): number {
+    const [px, py] = point;
+    const [x1, y1] = lineStart;
+    const [x2, y2] = lineEnd;
+
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    
+    if (lenSq === 0) {
+      // Line start and end are the same point
+      return Math.sqrt(A * A + B * B);
+    }
+
+    const param = dot / lenSq;
+    let xx, yy;
+
+    if (param < 0) {
+      xx = x1;
+      yy = y1;
+    } else if (param > 1) {
+      xx = x2;
+      yy = y2;
+    } else {
+      xx = x1 + param * C;
+      yy = y1 + param * D;
+    }
+
+    const dx = px - xx;
+    const dy = py - yy;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   /**

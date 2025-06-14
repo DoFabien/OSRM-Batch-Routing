@@ -225,28 +225,98 @@ export class RoutingConfigComponent implements OnInit {
   private autoSelectFields() {
     if (!this.fileData) return;
 
-    const headers = this.fileData.headers.map(h => h.toLowerCase());
-    
-    // Auto-detect origin fields
-    const originXCandidates = ['origin_x', 'orig_x', 'start_x', 'x1', 'lon1', 'longitude1'];
-    const originYCandidates = ['origin_y', 'orig_y', 'start_y', 'y1', 'lat1', 'latitude1'];
-    
-    // Auto-detect destination fields
-    const destXCandidates = ['dest_x', 'destination_x', 'end_x', 'x2', 'lon2', 'longitude2'];
-    const destYCandidates = ['dest_y', 'destination_y', 'end_y', 'y2', 'lat2', 'latitude2'];
-
-    this.originX = this.findMatchingHeader(headers, originXCandidates) || '';
-    this.originY = this.findMatchingHeader(headers, originYCandidates) || '';
-    this.destX = this.findMatchingHeader(headers, destXCandidates) || '';
-    this.destY = this.findMatchingHeader(headers, destYCandidates) || '';
+    // Use enhanced detection algorithm
+    this.originX = this.detectCoordinateField('originX') || '';
+    this.originY = this.detectCoordinateField('originY') || '';
+    this.destX = this.detectCoordinateField('destX') || '';
+    this.destY = this.detectCoordinateField('destY') || '';
   }
 
-  private findMatchingHeader(headers: string[], candidates: string[]): string | null {
-    for (const candidate of candidates) {
-      const found = headers.find(h => h === candidate);
-      if (found) {
-        // Return the original case header
-        return this.fileData!.headers[headers.indexOf(found)];
+  private detectCoordinateField(fieldType: 'originX' | 'originY' | 'destX' | 'destY'): string | null {
+    const headers = this.fileData!.headers;
+    const patterns = this.getFieldPatterns(fieldType);
+    
+    // Phase 1: Exact matches with high priority
+    for (const pattern of patterns.exact) {
+      const match = this.findExactMatch(headers, pattern);
+      if (match) return match;
+    }
+    
+    // Phase 2: Partial matches with medium priority
+    for (const pattern of patterns.partial) {
+      const match = this.findPartialMatch(headers, pattern);
+      if (match) return match;
+    }
+    
+    // Phase 3: Regex patterns with lower priority
+    for (const pattern of patterns.regex) {
+      const match = this.findRegexMatch(headers, pattern);
+      if (match) return match;
+    }
+    
+    return null;
+  }
+
+  private getFieldPatterns(fieldType: 'originX' | 'originY' | 'destX' | 'destY') {
+    const patterns = {
+      originX: {
+        exact: ['origin_x', 'orig_x', 'start_x', 'source_x', 'from_x', 'x1', 'x_origin', 'x_start', 'x_from', 'lon1', 'longitude1', 'long1', 'lng1'],
+        partial: ['origin', 'start', 'source', 'from', 'depart'],
+        regex: [/^x[_\-]?(1|orig|start|source|from)/i, /longitude[_\-]?(1|orig|start)/i, /lon[_\-]?(1|orig|start)/i]
+      },
+      originY: {
+        exact: ['origin_y', 'orig_y', 'start_y', 'source_y', 'from_y', 'y1', 'y_origin', 'y_start', 'y_from', 'lat1', 'latitude1'],
+        partial: ['origin', 'start', 'source', 'from', 'depart'],
+        regex: [/^y[_\-]?(1|orig|start|source|from)/i, /latitude[_\-]?(1|orig|start)/i, /lat[_\-]?(1|orig|start)/i]
+      },
+      destX: {
+        exact: ['dest_x', 'destination_x', 'end_x', 'target_x', 'to_x', 'x2', 'x_dest', 'x_end', 'x_to', 'lon2', 'longitude2', 'long2', 'lng2'],
+        partial: ['dest', 'destination', 'end', 'target', 'to', 'arrive'],
+        regex: [/^x[_\-]?(2|dest|end|target|to)/i, /longitude[_\-]?(2|dest|end)/i, /lon[_\-]?(2|dest|end)/i]
+      },
+      destY: {
+        exact: ['dest_y', 'destination_y', 'end_y', 'target_y', 'to_y', 'y2', 'y_dest', 'y_end', 'y_to', 'lat2', 'latitude2'],
+        partial: ['dest', 'destination', 'end', 'target', 'to', 'arrive'],
+        regex: [/^y[_\-]?(2|dest|end|target|to)/i, /latitude[_\-]?(2|dest|end)/i, /lat[_\-]?(2|dest|end)/i]
+      }
+    };
+    
+    return patterns[fieldType];
+  }
+
+  private findExactMatch(headers: string[], pattern: string): string | null {
+    const normalizedHeaders = headers.map(h => h.toLowerCase());
+    const index = normalizedHeaders.indexOf(pattern.toLowerCase());
+    return index !== -1 ? headers[index] : null;
+  }
+
+  private findPartialMatch(headers: string[], pattern: string): string | null {
+    // For partial matches, look for headers that contain the pattern and coordinate indicators
+    const coordinateIndicators = {
+      x: ['x', 'longitude', 'lon', 'long', 'lng'],
+      y: ['y', 'latitude', 'lat']
+    };
+    
+    for (const header of headers) {
+      const lowerHeader = header.toLowerCase();
+      if (lowerHeader.includes(pattern.toLowerCase())) {
+        // Check if this header also contains coordinate indicators
+        const hasXIndicator = coordinateIndicators.x.some(ind => lowerHeader.includes(ind));
+        const hasYIndicator = coordinateIndicators.y.some(ind => lowerHeader.includes(ind));
+        
+        if (hasXIndicator || hasYIndicator) {
+          return header;
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  private findRegexMatch(headers: string[], pattern: RegExp): string | null {
+    for (const header of headers) {
+      if (pattern.test(header)) {
+        return header;
       }
     }
     return null;

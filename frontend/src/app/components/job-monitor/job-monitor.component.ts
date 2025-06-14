@@ -6,8 +6,9 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
-import { interval, Subscription } from 'rxjs';
+import { Subscription } from 'rxjs';
 import { ApiService, JobStatus, JobResults, JobMetadata } from '../../services/api.service';
+import { WebSocketService, WebSocketMessage } from '../../services/websocket.service';
 
 @Component({
   selector: 'app-job-monitor',
@@ -123,6 +124,14 @@ import { ApiService, JobStatus, JobResults, JobMetadata } from '../../services/a
               <div class="metadata-content">
                 <span class="metadata-label">Generated At</span>
                 <span class="metadata-value">{{ formatTimestamp(jobMetadata.generatedAt) }}</span>
+              </div>
+            </div>
+            
+            <div class="metadata-item">
+              <mat-icon color="primary">speed</mat-icon>
+              <div class="metadata-content">
+                <span class="metadata-label">Calculations/Minute</span>
+                <span class="metadata-value">{{ getCalculationsPerMinute() }}</span>
               </div>
             </div>
           </div>
@@ -333,10 +342,12 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   loading = false;
   loadingMetadata = false;
   private statusSubscription?: Subscription;
+  private websocketSubscription?: Subscription;
 
   constructor(
     private apiService: ApiService,
-    private snackBar: MatSnackBar
+    private snackBar: MatSnackBar,
+    private websocketService: WebSocketService
   ) {}
 
   ngOnInit() {
@@ -361,12 +372,23 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private startMonitoring() {
+    // Get initial status
     this.refreshStatus();
     
-    // Poll every 2 seconds while job is running
-    this.statusSubscription = interval(2000).subscribe(() => {
-      if (this.jobStatus?.status === 'pending' || this.jobStatus?.status === 'processing') {
-        this.refreshStatus();
+    // Subscribe to WebSocket updates for this job
+    this.websocketService.subscribeToJob(this.jobId);
+    
+    // Listen for WebSocket messages
+    this.websocketSubscription = this.websocketService.getMessages().subscribe({
+      next: (message: WebSocketMessage) => {
+        if (message.jobId === this.jobId && message.type === 'job_update') {
+          this.handleWebSocketUpdate(message.data);
+        }
+      },
+      error: (error) => {
+        console.error('WebSocket error:', error);
+        // Fallback to polling if WebSocket fails
+        this.fallbackToPolling();
       }
     });
   }
@@ -374,6 +396,46 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   private stopMonitoring() {
     if (this.statusSubscription) {
       this.statusSubscription.unsubscribe();
+    }
+    if (this.websocketSubscription) {
+      this.websocketSubscription.unsubscribe();
+    }
+    if (this.jobId) {
+      this.websocketService.unsubscribeFromJob(this.jobId);
+    }
+  }
+
+  private handleWebSocketUpdate(data: any) {
+    if (data.progress) {
+      // Update progress in real-time
+      if (this.jobStatus) {
+        this.jobStatus.progress = data.progress;
+      }
+    }
+    
+    if (data.status) {
+      // Update status in real-time
+      if (this.jobStatus) {
+        this.jobStatus.status = data.status;
+        
+        // Load metadata when job is completed
+        if (data.status === 'completed') {
+          this.loadJobMetadata();
+        }
+      }
+    }
+  }
+
+  private fallbackToPolling() {
+    console.warn('Falling back to polling due to WebSocket issues');
+    // Only poll if job is still running
+    if (this.jobStatus?.status === 'pending' || this.jobStatus?.status === 'processing') {
+      this.statusSubscription = this.websocketService.getConnectionStatus().subscribe(connected => {
+        if (!connected) {
+          // Poll every 5 seconds as fallback
+          setTimeout(() => this.refreshStatus(), 5000);
+        }
+      });
     }
   }
 
@@ -456,6 +518,24 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}m ${remainingSeconds}s`;
+  }
+
+  getCalculationsPerMinute(): string {
+    if (!this.jobStatus?.startedAt || !this.jobStatus?.completedAt || !this.jobMetadata?.totalFeatures) {
+      return 'N/A';
+    }
+
+    const start = new Date(this.jobStatus.startedAt);
+    const end = new Date(this.jobStatus.completedAt);
+    const durationMs = end.getTime() - start.getTime();
+    const durationMinutes = durationMs / (1000 * 60);
+    
+    if (durationMinutes === 0) {
+      return 'N/A';
+    }
+
+    const calculationsPerMinute = this.jobMetadata.totalFeatures / durationMinutes;
+    return Math.round(calculationsPerMinute).toLocaleString();
   }
 
 

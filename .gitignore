@@ -104,3 +104,7 @@ osrm-data/*.graph
 # Uploads
 uploads/
 temp-uploads/
+
+# Test data files and documentation
+*.csv
+DOCUMENTATION_TECHNIQUE.md

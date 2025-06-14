@@ -5,9 +5,11 @@ import type { LineString } from 'geojson';
 
 export class OSRMService {
   private baseUrl: string;
+  private requestDelay: number;
 
   constructor(baseUrl: string = process.env['OSRM_URL'] || 'http://localhost:5000') {
     this.baseUrl = baseUrl;
+    this.requestDelay = parseInt(process.env['OSRM_REQUEST_DELAY'] || '50'); // 50ms default delay
   }
 
   /**
@@ -140,8 +142,8 @@ export class OSRMService {
           });
         }
         
-        // Small delay to avoid overwhelming OSRM
-        await new Promise(resolve => setTimeout(resolve, 10));
+        // Configurable delay to avoid overwhelming OSRM
+        await new Promise(resolve => setTimeout(resolve, this.requestDelay));
         
       } catch (error) {
         logger.error(`Route calculation failed for row ${coord.rowIndex}:`, error);

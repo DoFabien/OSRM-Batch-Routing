@@ -19,6 +19,7 @@ export interface UploadedFile {
   rowCount: number;
   encoding: string;
   separator: string;
+  decimalSeparator: '.' | ',';
 }
 
 export interface RouteConfiguration {
@@ -31,6 +32,12 @@ export interface RouteConfiguration {
   destinationFields: {
     x: string;
     y: string;
+  };
+  geometryOptions?: {
+    exportGeometry: boolean;
+    simplifyGeometry: boolean;
+    simplificationTolerance?: number;
+    straightLineGeometry: boolean;
   };
 }
 
@@ -72,6 +79,8 @@ export interface BatchResult {
     failed: number;
     totalDistance: number;
     totalDuration: number;
+    jobDurationMs?: number;
+    jobDurationSeconds?: number;
   };
 }
 

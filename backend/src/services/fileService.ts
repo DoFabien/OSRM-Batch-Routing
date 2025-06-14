@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import csv from 'csvtojson';
 import { v4 as uuidv4 } from 'uuid';
+import chardet from 'chardet';
 import { UploadedFile, ValidationError } from '@/types';
 import { logger } from '@/utils/logger';
 
@@ -34,15 +35,20 @@ export class FileService {
       // Save file to disk
       await fs.writeFile(filePath, file.buffer);
       
-      // Detect separator and encoding
-      const sample = file.buffer.toString('utf8', 0, 1000);
-      const separator = this.detectSeparator(sample);
+      // Detect encoding first
+      const detectedEncoding = this.detectEncoding(file.buffer);
       
-      // Parse CSV to get headers and row count
+      // Detect separator and decimal separator using detected encoding
+      const sample = file.buffer.toString(detectedEncoding as BufferEncoding, 0, 1000);
+      const separator = this.detectSeparator(sample);
+      const decimalSeparator = this.detectDecimalSeparator(sample);
+      
+      // Parse CSV to get headers and row count using detected encoding
+      const fileContent = file.buffer.toString(detectedEncoding as BufferEncoding);
       const jsonArray = await csv({
         delimiter: separator,
         noheader: false,
-      }).fromString(file.buffer.toString('utf8'));
+      }).fromString(fileContent);
 
       const headers = Object.keys(jsonArray[0] || {});
       const rowCount = jsonArray.length;
@@ -55,8 +61,9 @@ export class FileService {
         uploadedAt: new Date(),
         headers,
         rowCount,
-        encoding: 'utf8',
+        encoding: detectedEncoding,
         separator,
+        decimalSeparator,
       };
 
       // Store file metadata
@@ -89,13 +96,15 @@ export class FileService {
         throw new Error('File not found');
       }
 
+      // Get file metadata to use stored encoding and separator
+      const fileMetadata = this.files.get(fileId);
+      const encoding = (fileMetadata?.encoding || 'utf8') as BufferEncoding;
+      const separator = fileMetadata?.separator || ',';
+
       const filePath = path.join(this.uploadDir, fileName);
-      const fileContent = await fs.readFile(filePath, 'utf8');
+      const fileContent = await fs.readFile(filePath, encoding);
       
-      // Detect separator
-      const separator = this.detectSeparator(fileContent.substring(0, 1000));
-      
-      // Parse CSV
+      // Parse CSV using stored separator and encoding
       const jsonArray = await csv({
         delimiter: separator,
         noheader: false,
@@ -165,22 +174,90 @@ export class FileService {
   }
 
   private detectSeparator(sample: string): string {
-    const separators = [';', ',', '\t', '|'];
+    const separators = [';', ',', '\t', '|', ':'];
     let bestSeparator = ',';
-    let maxColumns = 0;
+    let maxScore = 0;
 
     for (const sep of separators) {
-      const lines = sample.split('\n').slice(0, 3); // Check first 3 lines
-      const columnCounts = lines.map(line => line.split(sep).length);
-      const avgColumns = columnCounts.reduce((a, b) => a + b, 0) / columnCounts.length;
-      
-      if (avgColumns > maxColumns) {
-        maxColumns = avgColumns;
+      const score = this.calculateSeparatorScore(sample, sep);
+      if (score > maxScore) {
+        maxScore = score;
         bestSeparator = sep;
       }
     }
 
     return bestSeparator;
+  }
+
+  private calculateSeparatorScore(sample: string, separator: string): number {
+    const lines = sample.split('\n').filter(line => line.trim().length > 0).slice(0, 10);
+    if (lines.length < 2) return 0;
+
+    // Count occurrences of separator in each line
+    const columnCounts = lines.map(line => line.split(separator).length);
+    
+    // Check consistency across lines (same number of columns)
+    const firstLineColumns = columnCounts[0];
+    const consistency = columnCounts.filter(count => count === firstLineColumns).length / columnCounts.length;
+    
+    // More columns is generally better (minimum 2)
+    const columnScore = Math.max(0, firstLineColumns - 1);
+    
+    // Penalize single column (probably wrong separator)
+    if (firstLineColumns < 2) return 0;
+    
+    // Calculate final score: consistency is most important, then number of columns
+    return consistency * 100 + columnScore * 2;
+  }
+
+  private detectDecimalSeparator(sample: string): '.' | ',' {
+    // Count occurrences of potential decimal separators in numeric contexts
+    const decimalDotPattern = /\d+\.\d+/g;
+    const decimalCommaPattern = /\d+,\d+/g;
+    
+    const dotMatches = (sample.match(decimalDotPattern) || []).length;
+    const commaMatches = (sample.match(decimalCommaPattern) || []).length;
+    
+    // Default to dot if no clear pattern
+    if (dotMatches === 0 && commaMatches === 0) return '.';
+    
+    return dotMatches >= commaMatches ? '.' : ',';
+  }
+
+  private detectEncoding(buffer: Buffer): string {
+    try {
+      const detected = chardet.detect(buffer);
+      if (detected) {
+        // Normalize common encoding names
+        if (Array.isArray(detected)) {
+          return this.normalizeEncoding(detected[0].name);
+        } else {
+          return this.normalizeEncoding(detected);
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to detect encoding:', error);
+    }
+    
+    // Default to utf8
+    return 'utf8';
+  }
+
+  private normalizeEncoding(encoding: string): string {
+    const normalized = encoding.toLowerCase();
+    
+    // Map common encoding variations to standard names
+    const encodingMap: { [key: string]: string } = {
+      'utf-8': 'utf8',
+      'utf8': 'utf8',
+      'iso-8859-1': 'latin1',
+      'latin1': 'latin1',
+      'windows-1252': 'latin1',
+      'cp1252': 'latin1',
+      'ascii': 'ascii'
+    };
+    
+    return encodingMap[normalized] || 'utf8';
   }
 
   /**

@@ -11,6 +11,7 @@ export class JobService {
   private jobResults: Map<string, RouteResult[]> = new Map();
   private readonly maxJobsKept = parseInt(process.env['MAX_JOBS_KEPT'] || '100');
   private readonly cleanupInterval = parseInt(process.env['FILE_CLEANUP_INTERVAL'] || '24') * 60 * 60 * 1000; // hours
+  private readonly immediateCleanup = process.env['IMMEDIATE_CLEANUP'] === 'true';
   private cleanupTimer?: NodeJS.Timeout | undefined;
 
   constructor() {
@@ -97,7 +98,7 @@ export class JobService {
       }
 
       const results: RouteResult[] = [];
-      const batchSize = 10; // Process in batches to avoid overwhelming OSRM
+      const batchSize = parseInt(process.env['BATCH_SIZE'] || '25'); // Configurable batch size
 
       // Process data in batches
       for (let i = 0; i < fileData.length; i += batchSize) {
@@ -220,9 +221,13 @@ export class JobService {
         totalDuration
       };
 
+      // Calculate job duration before completion
+      const jobDuration = job.startedAt ? Date.now() - job.startedAt.getTime() : 0;
+      const jobDurationSeconds = Math.round(jobDuration / 1000);
+      
       // Save GeoJSON to disk using streaming
       try {
-        await resultService.saveGeoJSONResults(jobId, results, summary);
+        await resultService.saveGeoJSONResults(jobId, results, summary, job.configuration, job);
         logger.info(`GeoJSON saved to disk for job ${jobId}`);
       } catch (error) {
         logger.error(`Failed to save GeoJSON for job ${jobId}:`, error);
@@ -234,8 +239,14 @@ export class JobService {
       logger.info(`Job ${jobId} completed successfully`, {
         total: results.length,
         successful: successful.length,
-        failed: results.length - successful.length
+        failed: results.length - successful.length,
+        duration: `${jobDurationSeconds}s`
       });
+
+      // Immediate cleanup if enabled
+      if (this.immediateCleanup) {
+        this.cleanupCompletedJob(jobId);
+      }
 
     } catch (error) {
       logger.error(`Job ${jobId} processing failed:`, error);
@@ -309,17 +320,12 @@ export class JobService {
   }
 
   /**
-   * Broadcast WebSocket message
+   * Broadcast WebSocket message to job subscribers
    */
   private broadcastWebSocketMessage(message: WebSocketMessage): void {
     try {
-      if (global.webSocketServer) {
-        const messageStr = JSON.stringify(message);
-        global.webSocketServer.clients.forEach(client => {
-          if (client.readyState === 1) { // WebSocket.OPEN
-            client.send(messageStr);
-          }
-        });
+      if (message.jobId && global.broadcastJobUpdate) {
+        global.broadcastJobUpdate(message.jobId, message.data);
       }
     } catch (error) {
       logger.error('Failed to broadcast WebSocket message:', error);
@@ -340,6 +346,12 @@ export class JobService {
     const successful = results.filter(r => r.success);
     const totalDistance = successful.reduce((sum, r) => sum + (r.route?.distance || 0), 0);
     const totalDuration = successful.reduce((sum, r) => sum + (r.route?.duration || 0), 0);
+    
+    // Calculate job execution duration
+    const jobDuration = job.startedAt && job.completedAt 
+      ? job.completedAt.getTime() - job.startedAt.getTime() 
+      : 0;
+    const jobDurationSeconds = Math.round(jobDuration / 1000);
 
     return {
       jobId,
@@ -350,7 +362,9 @@ export class JobService {
         successful: successful.length,
         failed: results.length - successful.length,
         totalDistance,
-        totalDuration
+        totalDuration,
+        jobDurationMs: jobDuration,
+        jobDurationSeconds
       }
     };
   }
@@ -392,6 +406,33 @@ export class JobService {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined as NodeJS.Timeout | undefined;
       logger.info('Job cleanup scheduler stopped');
+    }
+  }
+
+  /**
+   * Clean up a specific completed job immediately
+   */
+  private cleanupCompletedJob(jobId: string): void {
+    try {
+      const job = this.jobs.get(jobId);
+      if (!job) return;
+
+      // Clean up associated file
+      if (job.fileId) {
+        fileService.deleteFile(job.fileId).catch(error => {
+          logger.warn(`Failed to cleanup file ${job.fileId} for job ${jobId}:`, error);
+        });
+      }
+
+      // Remove job and results from memory after a short delay to allow export
+      setTimeout(() => {
+        this.jobs.delete(jobId);
+        this.jobResults.delete(jobId);
+        logger.info(`Immediate cleanup completed for job ${jobId}`);
+      }, 30000); // 30 second delay to allow download
+
+    } catch (error) {
+      logger.error(`Failed to cleanup job ${jobId}:`, error);
     }
   }
 }

@@ -1,0 +1,14 @@
+FROM osrm/osrm-backend:latest
+
+# Create data directory
+RUN mkdir -p /data
+
+# Copy init script (simplified without downloads for now)
+COPY scripts/init-osrm-data.sh /init-osrm-data.sh
+RUN chmod +x /init-osrm-data.sh
+
+# Expose OSRM port
+EXPOSE 5000
+
+# Default command (will be overridden by docker-compose)
+CMD ["osrm-routed", "--algorithm", "mld", "/data/france-latest.osrm"]
