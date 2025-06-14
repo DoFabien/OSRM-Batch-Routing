@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Subject, Observable, BehaviorSubject } from 'rxjs';
+import { io, Socket } from 'socket.io-client';
 import { environment } from '../../environments/environment';
 
 export interface WebSocketMessage {
@@ -13,12 +14,9 @@ export interface WebSocketMessage {
   providedIn: 'root'
 })
 export class WebSocketService {
-  private socket: WebSocket | null = null;
+  private socket: Socket | null = null;
   private messageSubject = new Subject<WebSocketMessage>();
   private connectionSubject = new BehaviorSubject<boolean>(false);
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectInterval = 5000; // 5 seconds
 
   constructor() {
     this.connect();
@@ -26,79 +24,61 @@ export class WebSocketService {
 
   private connect(): void {
     try {
-      const wsUrl = environment.production 
-        ? `wss://${window.location.host}`
-        : 'ws://localhost:3001';
+      const serverUrl = environment.production 
+        ? window.location.origin
+        : 'http://localhost:3001';
       
-      this.socket = new WebSocket(wsUrl);
+      this.socket = io(serverUrl, {
+        transports: ['websocket', 'polling'],
+        autoConnect: true,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+      });
 
-      this.socket.onopen = () => {
-        console.log('WebSocket connected');
+      this.socket.on('connect', () => {
+        console.log('Socket.IO connected');
         this.connectionSubject.next(true);
-        this.reconnectAttempts = 0;
-      };
+      });
 
-      this.socket.onmessage = (event) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(event.data);
-          this.messageSubject.next(message);
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      };
+      this.socket.on('job_update', (data: any) => {
+        console.log('Received job update:', data);
+        this.messageSubject.next({
+          type: 'job_update',
+          jobId: data.jobId,
+          data: data.data
+        });
+      });
 
-      this.socket.onclose = () => {
-        console.log('WebSocket disconnected');
+      this.socket.on('disconnect', () => {
+        console.log('Socket.IO disconnected');
         this.connectionSubject.next(false);
-        this.attemptReconnect();
-      };
+      });
 
-      this.socket.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      this.socket.on('connect_error', (error) => {
+        console.error('Socket.IO connection error:', error);
         this.messageSubject.next({
           type: 'error',
-          message: 'WebSocket connection error'
+          message: 'Socket.IO connection error'
         });
-      };
+      });
 
     } catch (error) {
-      console.error('Failed to create WebSocket connection:', error);
-      this.attemptReconnect();
-    }
-  }
-
-  private attemptReconnect(): void {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      console.log(`Attempting to reconnect WebSocket (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-      
-      setTimeout(() => {
-        this.connect();
-      }, this.reconnectInterval);
-    } else {
-      console.error('Max reconnection attempts reached');
-      this.messageSubject.next({
-        type: 'error',
-        message: 'WebSocket connection lost and cannot be restored'
-      });
+      console.error('Failed to create Socket.IO connection:', error);
     }
   }
 
   public subscribeToJob(jobId: string): void {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({
-        type: 'subscribe',
-        jobId: jobId
-      }));
+    if (this.socket && this.socket.connected) {
+      console.log(`Subscribing to job: ${jobId}`);
+      this.socket.emit('subscribe', jobId);
     }
   }
 
   public unsubscribeFromJob(jobId: string): void {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({
-        type: 'unsubscribe',
-        jobId: jobId
-      }));
+    if (this.socket && this.socket.connected) {
+      console.log(`Unsubscribing from job: ${jobId}`);
+      this.socket.emit('unsubscribe', jobId);
     }
   }
 
@@ -111,12 +91,12 @@ export class WebSocketService {
   }
 
   public isConnected(): boolean {
-    return this.socket?.readyState === WebSocket.OPEN;
+    return this.socket?.connected || false;
   }
 
   public disconnect(): void {
     if (this.socket) {
-      this.socket.close();
+      this.socket.disconnect();
       this.socket = null;
     }
     this.connectionSubject.next(false);

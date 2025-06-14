@@ -6,7 +6,7 @@ import morgan from 'morgan';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
+import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 
 import { errorHandler } from '@/middleware/errorHandler';
@@ -80,99 +80,69 @@ server.timeout = JOB_TIMEOUT; // Increase timeout for long batch jobs
 server.keepAliveTimeout = JOB_TIMEOUT + 5000; // Keep alive slightly longer
 server.headersTimeout = JOB_TIMEOUT + 10000; // Headers timeout
 
-// Setup WebSocket server for real-time updates
-const wss = new WebSocketServer({ server });
+// Setup Socket.IO server for real-time updates
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: true,
+    methods: ["GET", "POST"]
+  }
+});
 
 // Track client subscriptions to jobs
-const jobSubscriptions = new Map<string, Set<any>>();
+const jobSubscriptions = new Map<string, Set<string>>();
 
-wss.on('connection', (ws) => {
-  logger.info('WebSocket client connected');
+io.on('connection', (socket) => {
+  logger.info(`Socket.IO client connected: ${socket.id}`);
   
-  // Handle subscription messages
-  ws.on('message', (data) => {
-    try {
-      const message = JSON.parse(data.toString());
-      
-      if (message.type === 'subscribe' && message.jobId) {
-        // Subscribe client to job updates
-        if (!jobSubscriptions.has(message.jobId)) {
-          jobSubscriptions.set(message.jobId, new Set());
-        }
-        jobSubscriptions.get(message.jobId)!.add(ws);
-        logger.info(`Client subscribed to job: ${message.jobId}`);
-      } else if (message.type === 'unsubscribe' && message.jobId) {
-        // Unsubscribe client from job updates
-        const subscribers = jobSubscriptions.get(message.jobId);
-        if (subscribers) {
-          subscribers.delete(ws);
-          if (subscribers.size === 0) {
-            jobSubscriptions.delete(message.jobId);
-          }
-        }
-        logger.info(`Client unsubscribed from job: ${message.jobId}`);
-      }
-    } catch (error) {
-      logger.error('Error parsing WebSocket message:', error);
+  // Handle job subscription
+  socket.on('subscribe', (jobId: string) => {
+    if (!jobSubscriptions.has(jobId)) {
+      jobSubscriptions.set(jobId, new Set());
     }
+    jobSubscriptions.get(jobId)!.add(socket.id);
+    socket.join(`job-${jobId}`);
+    logger.info(`Client ${socket.id} subscribed to job: ${jobId}`);
   });
   
-  ws.on('close', () => {
-    logger.info('WebSocket client disconnected');
+  // Handle job unsubscription
+  socket.on('unsubscribe', (jobId: string) => {
+    const subscribers = jobSubscriptions.get(jobId);
+    if (subscribers) {
+      subscribers.delete(socket.id);
+      if (subscribers.size === 0) {
+        jobSubscriptions.delete(jobId);
+      }
+    }
+    socket.leave(`job-${jobId}`);
+    logger.info(`Client ${socket.id} unsubscribed from job: ${jobId}`);
+  });
+  
+  socket.on('disconnect', () => {
+    logger.info(`Socket.IO client disconnected: ${socket.id}`);
     // Clean up subscriptions for this client
     for (const [jobId, subscribers] of jobSubscriptions.entries()) {
-      subscribers.delete(ws);
+      subscribers.delete(socket.id);
       if (subscribers.size === 0) {
         jobSubscriptions.delete(jobId);
       }
     }
   });
-  
-  ws.on('error', (error) => {
-    logger.error('WebSocket error:', error);
-  });
 });
 
-// Make WebSocket server and subscriptions available globally for job updates
+// Make Socket.IO server available globally for job updates
 declare global {
-  var webSocketServer: WebSocketServer;
-  var jobSubscriptions: Map<string, Set<any>>;
+  var socketIOServer: SocketIOServer;
   function broadcastJobUpdate(jobId: string, data: any): void;
 }
-global.webSocketServer = wss;
-global.jobSubscriptions = jobSubscriptions;
+global.socketIOServer = io;
 
-// Global function to broadcast job updates
+// Global function to broadcast job updates via Socket.IO
 global.broadcastJobUpdate = (jobId: string, data: any) => {
-  const subscribers = jobSubscriptions.get(jobId);
-  if (subscribers && subscribers.size > 0) {
-    const message = JSON.stringify({
-      type: 'job_update',
-      jobId: jobId,
-      data: data
-    });
-    
-    // Send to all subscribers of this job
-    for (const client of subscribers) {
-      if (client.readyState === 1) { // WebSocket.OPEN
-        try {
-          client.send(message);
-        } catch (error) {
-          logger.error(`Error sending WebSocket message to client:`, error);
-          // Remove client if send fails
-          subscribers.delete(client);
-        }
-      } else {
-        // Remove disconnected clients
-        subscribers.delete(client);
-      }
-    }
-    
-    // Clean up if no more subscribers
-    if (subscribers.size === 0) {
-      jobSubscriptions.delete(jobId);
-    }
-  }
+  io.to(`job-${jobId}`).emit('job_update', {
+    jobId: jobId,
+    data: data
+  });
+  logger.debug(`Broadcasting job update for ${jobId}:`, data);
 };
 
 // Start server

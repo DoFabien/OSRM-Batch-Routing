@@ -22,6 +22,7 @@
     "@types/leaflet": "^1.9.18",
     "leaflet": "^1.9.4",
     "rxjs": "~7.8.0",
+    "socket.io-client": "^4.8.1",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"
   },
