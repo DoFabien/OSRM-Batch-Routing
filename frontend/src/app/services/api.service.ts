@@ -27,6 +27,15 @@ export interface FileUploadResponse {
   };
 }
 
+export interface FileSampleResponse {
+  success: boolean;
+  data: {
+    headers: string[];
+    sample: Record<string, string>[];
+    totalRows: number;
+  };
+}
+
 export interface BatchJobConfig {
   fileId: string;
   projection: Projection;
@@ -125,6 +134,10 @@ export class ApiService {
     formData.append('file', file);
     
     return this.http.post<FileUploadResponse>(`${this.baseUrl}/upload`, formData);
+  }
+
+  getFileSample(fileId: string, limit: number = 10): Observable<FileSampleResponse> {
+    return this.http.get<FileSampleResponse>(`${this.baseUrl}/upload/${fileId}/sample?limit=${limit}`);
   }
 
   createBatchJob(config: BatchJobConfig): Observable<BatchJobResponse> {

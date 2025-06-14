@@ -15,6 +15,43 @@ const upload = multer({
   },
 });
 
+// Route pour récupérer un échantillon des données
+router.get('/:fileId/sample', 
+  asyncHandler(async (req: Request, res: Response<ApiResponse<any>>) => {
+    const { fileId } = req.params;
+    const limit = parseInt(req.query.limit as string) || 10;
+
+    try {
+      const fileData = await fileService.getFileData(fileId);
+      
+      if (!fileData || fileData.length === 0) {
+        res.status(404).json({
+          success: false,
+          error: 'File not found or empty',
+        });
+        return;
+      }
+
+      // Retourner un échantillon des données
+      const sample = fileData.slice(0, limit);
+      
+      res.json({
+        success: true,
+        data: {
+          headers: Object.keys(fileData[0] || {}),
+          sample: sample,
+          totalRows: fileData.length
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get file sample',
+      });
+    }
+  })
+);
+
 router.post('/', 
   upload.single('file'),
   asyncHandler(async (req: Request, res: Response<ApiResponse<UploadedFile>>) => {

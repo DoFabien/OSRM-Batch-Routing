@@ -8,6 +8,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
 import { ApiService, Projection, BatchJobConfig, FileUploadResponse } from '../../services/api.service';
+import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/coordinate-detection.service';
 
 @Component({
   selector: 'app-routing-config',
@@ -195,10 +196,13 @@ export class RoutingConfigComponent implements OnInit {
   // For coordinate field filtering
   allHeaders: string[] = [];
   coordinateHeaders: string[] = [];
+  coordinateAnalysis: CoordinateAnalysis[] = [];
+  isAnalyzing = false;
 
   constructor(
     private apiService: ApiService,
-    private snackBar: MatSnackBar
+    private snackBar: MatSnackBar,
+    private coordinateDetection: CoordinateDetectionService
   ) {}
 
   ngOnInit() {
@@ -229,175 +233,80 @@ export class RoutingConfigComponent implements OnInit {
   private autoSelectFields() {
     if (!this.fileData) return;
 
-    // First, filter headers to only show potential coordinate fields
-    this.filterCoordinateFields();
-
-    // Use enhanced detection algorithm
-    this.originX = this.detectCoordinateField('originX') || '';
-    this.originY = this.detectCoordinateField('originY') || '';
-    this.destX = this.detectCoordinateField('destX') || '';
-    this.destY = this.detectCoordinateField('destY') || '';
+    // Analyze the file data to detect coordinate fields
+    this.analyzeCoordinateFields();
   }
 
-  private filterCoordinateFields(): void {
-    if (!this.fileData || !this.fileData.headers) return;
+  private async analyzeCoordinateFields() {
+    if (!this.fileData) return;
 
-    // Analyze sample data to identify potential coordinate fields
-    const coordinateHeaders = this.fileData.headers.filter(header => {
-      return this.isLikelyCoordinateField(header);
-    });
+    this.isAnalyzing = true;
+    
+    try {
+      // Get sample data from the uploaded file
+      const sampleResponse = await this.apiService.getFileSample(this.fileData.id, 10).toPromise();
+      
+      if (sampleResponse?.success && sampleResponse.data) {
+        // Analyze the coordinate fields using the data
+        this.coordinateAnalysis = this.coordinateDetection.analyzeCoordinateFields(
+          sampleResponse.data.headers,
+          sampleResponse.data.sample
+        );
 
-    // Store original headers and filtered headers
-    this.allHeaders = [...this.fileData.headers];
-    this.coordinateHeaders = coordinateHeaders;
-  }
+        // Filter to show only coordinate fields
+        this.coordinateHeaders = this.coordinateDetection
+          .getCoordinateFields(this.coordinateAnalysis, 50)
+          .map(analysis => analysis.fieldName);
 
-  private isLikelyCoordinateField(headerName: string): boolean {
-    const lowerHeader = headerName.toLowerCase();
-    
-    // Check if header name suggests coordinates
-    const coordinateKeywords = [
-      'lat', 'latitude', 'lon', 'longitude', 'long', 'lng',
-      'x', 'y', 'coord', 'position', 'pos', 'geo',
-      'origin', 'dest', 'start', 'end', 'from', 'to',
-      'smur', 'aurh', 'com_aurh'
-    ];
-    
-    const hasCoordinateKeyword = coordinateKeywords.some(keyword => 
-      lowerHeader.includes(keyword)
-    );
-    
-    if (!hasCoordinateKeyword) return false;
-
-    // Analyze actual data values from first 10 rows to confirm it's numeric coordinates
-    return this.analyzeFieldValues(headerName);
-  }
-
-  private analyzeFieldValues(headerName: string): boolean {
-    // For now, just return true since we don't have access to the actual data
-    // This will be improved when we have a preview of the data
-    return true;
-  }
-
-  private detectCoordinateField(fieldType: 'originX' | 'originY' | 'destX' | 'destY'): string | null {
-    const headers = this.fileData!.headers;
-    const patterns = this.getFieldPatterns(fieldType);
-    
-    // Phase 1: Exact matches with high priority
-    for (const pattern of patterns.exact) {
-      const match = this.findExactMatch(headers, pattern);
-      if (match) return match;
-    }
-    
-    // Phase 2: Partial matches with medium priority
-    for (const pattern of patterns.partial) {
-      const match = this.findPartialMatch(headers, pattern);
-      if (match) return match;
-    }
-    
-    // Phase 3: Regex patterns with lower priority
-    for (const pattern of patterns.regex) {
-      const match = this.findRegexMatch(headers, pattern);
-      if (match) return match;
-    }
-    
-    return null;
-  }
-
-  private getFieldPatterns(fieldType: 'originX' | 'originY' | 'destX' | 'destY') {
-    const patterns = {
-      originX: {
-        exact: ['origin_x', 'orig_x', 'start_x', 'source_x', 'from_x', 'x1', 'x_origin', 'x_start', 'x_from', 'lon1', 'longitude1', 'long1', 'lng1', 'longitude_smur', 'longitude_origin', 'longitude_start'],
-        partial: ['origin', 'start', 'source', 'from', 'depart', 'smur'],
-        regex: [
-          /^x[_\-]?(1|orig|start|source|from)/i, 
-          /longitude[_\-]?(1|orig|start|smur|origin)/i, 
-          /lon[_\-]?(1|orig|start|smur)/i,
-          /longitude[_\-].*smur/i,
-          /longitude[_\-].*origin/i,
-          /longitude[_\-].*start/i
-        ]
-      },
-      originY: {
-        exact: ['origin_y', 'orig_y', 'start_y', 'source_y', 'from_y', 'y1', 'y_origin', 'y_start', 'y_from', 'lat1', 'latitude1', 'latitude_smur', 'latitude_origin', 'latitude_start'],
-        partial: ['origin', 'start', 'source', 'from', 'depart', 'smur'],
-        regex: [
-          /^y[_\-]?(1|orig|start|source|from)/i, 
-          /latitude[_\-]?(1|orig|start|smur|origin)/i, 
-          /lat[_\-]?(1|orig|start|smur)/i,
-          /latitude[_\-].*smur/i,
-          /latitude[_\-].*origin/i,
-          /latitude[_\-].*start/i
-        ]
-      },
-      destX: {
-        exact: ['dest_x', 'destination_x', 'end_x', 'target_x', 'to_x', 'x2', 'x_dest', 'x_end', 'x_to', 'lon2', 'longitude2', 'long2', 'lng2', 'longitude_com_aurh', 'longitude_destination', 'longitude_end', 'longitude_target'],
-        partial: ['dest', 'destination', 'end', 'target', 'to', 'arrive', 'com_aurh', 'aurh'],
-        regex: [
-          /^x[_\-]?(2|dest|end|target|to)/i, 
-          /longitude[_\-]?(2|dest|end|target|com_aurh|aurh)/i, 
-          /lon[_\-]?(2|dest|end|com_aurh|aurh)/i,
-          /longitude[_\-].*com_aurh/i,
-          /longitude[_\-].*aurh/i,
-          /longitude[_\-].*destination/i,
-          /longitude[_\-].*end/i
-        ]
-      },
-      destY: {
-        exact: ['dest_y', 'destination_y', 'end_y', 'target_y', 'to_y', 'y2', 'y_dest', 'y_end', 'y_to', 'lat2', 'latitude2', 'latitude_com_aurh', 'latitude_destination', 'latitude_end', 'latitude_target'],
-        partial: ['dest', 'destination', 'end', 'target', 'to', 'arrive', 'com_aurh', 'aurh'],
-        regex: [
-          /^y[_\-]?(2|dest|end|target|to)/i, 
-          /latitude[_\-]?(2|dest|end|target|com_aurh|aurh)/i, 
-          /lat[_\-]?(2|dest|end|com_aurh|aurh)/i,
-          /latitude[_\-].*com_aurh/i,
-          /latitude[_\-].*aurh/i,
-          /latitude[_\-].*destination/i,
-          /latitude[_\-].*end/i
-        ]
-      }
-    };
-    
-    return patterns[fieldType];
-  }
-
-  private findExactMatch(headers: string[], pattern: string): string | null {
-    const normalizedHeaders = headers.map(h => h.toLowerCase());
-    const index = normalizedHeaders.indexOf(pattern.toLowerCase());
-    return index !== -1 ? headers[index] : null;
-  }
-
-  private findPartialMatch(headers: string[], pattern: string): string | null {
-    // For partial matches, look for headers that contain the pattern and coordinate indicators
-    const coordinateIndicators = {
-      x: ['x', 'longitude', 'lon', 'long', 'lng'],
-      y: ['y', 'latitude', 'lat']
-    };
-    
-    for (const header of headers) {
-      const lowerHeader = header.toLowerCase();
-      if (lowerHeader.includes(pattern.toLowerCase())) {
-        // Check if this header also contains coordinate indicators
-        const hasXIndicator = coordinateIndicators.x.some(ind => lowerHeader.includes(ind));
-        const hasYIndicator = coordinateIndicators.y.some(ind => lowerHeader.includes(ind));
+        // Auto-select the best fields
+        const autoSelection = this.coordinateDetection.autoSelectBestFields(this.coordinateAnalysis);
         
-        if (hasXIndicator || hasYIndicator) {
-          return header;
-        }
+        this.originX = autoSelection.originX || '';
+        this.originY = autoSelection.originY || '';
+        this.destX = autoSelection.destX || '';
+        this.destY = autoSelection.destY || '';
+
+        console.log('Coordinate analysis completed:', {
+          analysis: this.coordinateAnalysis,
+          coordinateFields: this.coordinateHeaders,
+          autoSelection
+        });
+
+      } else {
+        console.warn('Could not get file sample, using header-based detection');
+        this.fallbackToHeaderDetection();
       }
+    } catch (error) {
+      console.error('Error analyzing coordinate fields:', error);
+      this.fallbackToHeaderDetection();
+    } finally {
+      this.isAnalyzing = false;
     }
-    
-    return null;
   }
 
-  private findRegexMatch(headers: string[], pattern: RegExp): string | null {
-    for (const header of headers) {
-      if (pattern.test(header)) {
-        return header;
-      }
-    }
-    return null;
+  private fallbackToHeaderDetection() {
+    // Fallback to simple header name matching if data analysis fails
+    if (!this.fileData) return;
+
+    const headers = this.fileData.headers;
+    this.coordinateHeaders = headers.filter(header => this.hasCoordinateKeyword(header));
+    
+    this.originX = this.findHeaderByPattern(headers, /longitude.*smur|smur.*longitude|origin.*x|x.*origin/i) || '';
+    this.originY = this.findHeaderByPattern(headers, /latitude.*smur|smur.*latitude|origin.*y|y.*origin/i) || '';
+    this.destX = this.findHeaderByPattern(headers, /longitude.*(aurh|com_aurh)|dest.*x|x.*dest/i) || '';
+    this.destY = this.findHeaderByPattern(headers, /latitude.*(aurh|com_aurh)|dest.*y|y.*dest/i) || '';
   }
+
+  private hasCoordinateKeyword(header: string): boolean {
+    const lowerHeader = header.toLowerCase();
+    const keywords = ['lat', 'latitude', 'lon', 'longitude', 'x', 'y', 'coord'];
+    return keywords.some(keyword => lowerHeader.includes(keyword));
+  }
+
+  private findHeaderByPattern(headers: string[], pattern: RegExp): string | null {
+    return headers.find(header => pattern.test(header)) || null;
+  }
+
 
   getAvailableHeaders(fieldType: 'originX' | 'originY' | 'destX' | 'destY'): string[] {
     if (!this.fileData) return [];
