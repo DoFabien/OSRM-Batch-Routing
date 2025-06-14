@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { Component, EventEmitter, Output, ViewChild, ElementRef, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -133,8 +133,9 @@ import { ApiService, FileUploadResponse } from '../../services/api.service';
     }
   `]
 })
-export class FileUploadComponent {
+export class FileUploadComponent implements OnInit {
   @Output() fileUploaded = new EventEmitter<FileUploadResponse['data']>();
+  @ViewChild('fileInput') fileInput!: ElementRef<HTMLInputElement>;
 
   selectedFile: File | null = null;
   uploading = false;
@@ -144,6 +145,14 @@ export class FileUploadComponent {
     private apiService: ApiService,
     private snackBar: MatSnackBar
   ) {}
+  
+  ngOnInit() {
+    console.log('FileUploadComponent initialized');
+    // Ensure clean state on init
+    this.selectedFile = null;
+    this.uploading = false;
+    this.isDragOver = false;
+  }
 
   onDragOver(event: DragEvent) {
     event.preventDefault();
@@ -193,6 +202,10 @@ export class FileUploadComponent {
 
   clearFile() {
     this.selectedFile = null;
+    // Reset the file input
+    if (this.fileInput) {
+      this.fileInput.nativeElement.value = '';
+    }
   }
 
   uploadFile() {

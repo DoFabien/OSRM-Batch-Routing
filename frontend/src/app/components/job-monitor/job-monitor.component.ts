@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
@@ -9,6 +9,7 @@ import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
 import { ApiService, JobStatus, JobResults, JobMetadata } from '../../services/api.service';
 import { WebSocketService, WebSocketMessage } from '../../services/websocket.service';
+import { SessionService } from '../../services/session.service';
 
 @Component({
   selector: 'app-job-monitor',
@@ -99,7 +100,7 @@ import { WebSocketService, WebSocketMessage } from '../../services/websocket.ser
               <mat-icon color="primary">map</mat-icon>
               <div class="metadata-content">
                 <span class="metadata-label">Total Features</span>
-                <span class="metadata-value">{{ jobMetadata.totalFeatures }}</span>
+                <span class="metadata-value">{{ jobMetadata.summary.successful }}</span>
               </div>
             </div>
             
@@ -130,8 +131,16 @@ import { WebSocketService, WebSocketMessage } from '../../services/websocket.ser
             <div class="metadata-item">
               <mat-icon color="primary">speed</mat-icon>
               <div class="metadata-content">
-                <span class="metadata-label">Calculations/Minute</span>
-                <span class="metadata-value">{{ getCalculationsPerMinute() }}</span>
+                <span class="metadata-label">Calculations/Second</span>
+                <span class="metadata-value">{{ getCalculationsPerSecond() }}</span>
+              </div>
+            </div>
+            
+            <div class="metadata-item" *ngIf="jobMetadata.jobTiming?.durationSeconds">
+              <mat-icon color="primary">timer</mat-icon>
+              <div class="metadata-content">
+                <span class="metadata-label">Processing Time</span>
+                <span class="metadata-value">{{ jobMetadata.jobTiming!.durationSeconds }}s</span>
               </div>
             </div>
           </div>
@@ -149,6 +158,14 @@ import { WebSocketService, WebSocketMessage } from '../../services/websocket.ser
       </mat-card-content>
 
       <mat-card-actions align="end" *ngIf="jobStatus">
+        <button mat-button 
+                color="warn"
+                *ngIf="jobStatus.status === 'processing' || jobStatus.status === 'pending'"
+                (click)="cancelJob()">
+          <mat-icon>cancel</mat-icon>
+          Cancel Job
+        </button>
+        
         <button mat-button (click)="refreshStatus()">
           <mat-icon>refresh</mat-icon>
           Refresh
@@ -160,6 +177,14 @@ import { WebSocketService, WebSocketMessage } from '../../services/websocket.ser
                 [disabled]="jobStatus.status !== 'completed'">
           <mat-icon>download</mat-icon>
           Download GeoJSON
+        </button>
+        
+        <button mat-raised-button 
+                color="accent"
+                *ngIf="jobStatus.status === 'completed' || jobStatus.status === 'failed'"
+                (click)="startNewJob()">
+          <mat-icon>add</mat-icon>
+          New Job
         </button>
       </mat-card-actions>
     </mat-card>
@@ -336,6 +361,7 @@ import { WebSocketService, WebSocketMessage } from '../../services/websocket.ser
 })
 export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   @Input() jobId: string = '';
+  @Output() newJobRequested = new EventEmitter<void>();
 
   jobStatus: JobStatus | null = null;
   jobMetadata: JobMetadata | null = null;
@@ -347,7 +373,8 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   constructor(
     private apiService: ApiService,
     private snackBar: MatSnackBar,
-    private websocketService: WebSocketService
+    private websocketService: WebSocketService,
+    private sessionService: SessionService
   ) {}
 
   ngOnInit() {
@@ -372,15 +399,18 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private startMonitoring() {
+    console.log('JobMonitor - startMonitoring for jobId:', this.jobId);
+    
     // Get initial status
     this.refreshStatus();
     
-    // Subscribe to WebSocket updates for this job
+    // Subscribe to WebSocket updates for this job (handles connection state internally)
     this.websocketService.subscribeToJob(this.jobId);
     
     // Listen for WebSocket messages
     this.websocketSubscription = this.websocketService.getMessages().subscribe({
       next: (message: WebSocketMessage) => {
+        console.log('JobMonitor received WebSocket message:', message);
         if (message.jobId === this.jobId && message.type === 'job_update') {
           this.handleWebSocketUpdate(message.data);
         }
@@ -417,6 +447,12 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
       // Update status in real-time
       if (this.jobStatus) {
         this.jobStatus.status = data.status;
+        
+        // Handle job completion
+        if (data.status === 'completed') {
+          this.sessionService.clearCurrentJob();
+          this.sessionService.addCompletedJob(this.jobId);
+        }
         
         // Load metadata when job is completed
         if (data.status === 'completed') {
@@ -521,7 +557,7 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   getCalculationsPerMinute(): string {
-    if (!this.jobStatus?.startedAt || !this.jobStatus?.completedAt || !this.jobMetadata?.totalFeatures) {
+    if (!this.jobStatus?.startedAt || !this.jobStatus?.completedAt || !this.jobMetadata?.summary?.successful) {
       return 'N/A';
     }
 
@@ -534,8 +570,21 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
       return 'N/A';
     }
 
-    const calculationsPerMinute = this.jobMetadata.totalFeatures / durationMinutes;
+    const calculationsPerMinute = this.jobMetadata.summary.successful / durationMinutes;
     return Math.round(calculationsPerMinute).toLocaleString();
+  }
+
+  getCalculationsPerSecond(): string {
+    if (!this.jobMetadata?.summary?.successful || !this.jobMetadata?.jobTiming?.durationSeconds) {
+      return 'N/A';
+    }
+    
+    if (this.jobMetadata.jobTiming.durationSeconds === 0) {
+      return 'N/A';
+    }
+
+    const calculationsPerSecond = this.jobMetadata.summary.successful / this.jobMetadata.jobTiming.durationSeconds;
+    return calculationsPerSecond.toFixed(1);
   }
 
 
@@ -600,5 +649,63 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
       return `${hours}h ${minutes}m`;
     }
     return `${minutes}m`;
+  }
+  
+  cancelJob() {
+    if (!this.jobId || !this.jobStatus) return;
+    
+    if (confirm('Are you sure you want to cancel this job? All data will be lost.')) {
+      this.apiService.cancelJob(this.jobId).subscribe({
+        next: (response) => {
+          if (response.success) {
+            this.snackBar.open('Job cancelled successfully', 'Close', {
+              duration: 3000
+            });
+            
+            // Clear session
+            this.sessionService.clearCurrentJob();
+            
+            // Update local status
+            if (this.jobStatus) {
+              this.jobStatus.status = 'failed';
+              this.jobStatus.error = 'Job cancelled by user';
+            }
+          } else {
+            this.snackBar.open('Failed to cancel job', 'Close', {
+              duration: 3000
+            });
+          }
+        },
+        error: () => {
+          this.snackBar.open('Failed to cancel job', 'Close', {
+            duration: 3000
+          });
+        }
+      });
+    }
+  }
+  
+  startNewJob() {
+    if (confirm('Are you sure you want to start a new job? This will clean up current data.')) {
+      console.log('Starting new job, cleaning up current session');
+      
+      // Clean up current job if it exists
+      if (this.jobId && this.jobStatus?.status === 'completed') {
+        this.apiService.cleanupJob(this.jobId).subscribe({
+          next: () => {
+            console.log('Job cleanup completed');
+          },
+          error: (error) => {
+            console.warn('Failed to cleanup job:', error);
+          }
+        });
+      }
+      
+      // Clear session
+      this.sessionService.clearCurrentJob();
+      
+      // Emit event to parent to reset application
+      this.newJobRequested.emit();
+    }
   }
 }

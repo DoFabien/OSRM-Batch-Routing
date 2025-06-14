@@ -273,6 +273,46 @@ router.get('/export/:jobId',
 );
 
 /**
+ * GET /api/routing/metadata/:jobId
+ * Get job metadata as JSON
+ */
+router.get('/metadata/:jobId',
+  [param('jobId').isUUID().withMessage('Invalid job ID')],
+  asyncHandler(async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid job ID format'
+      });
+    }
+
+    const { jobId } = req.params;
+    
+    try {
+      const metadataPath = resultService.getMetadataFilePath(jobId);
+      const metadataExists = await resultService.hasMetadataFile(jobId);
+      
+      if (!metadataExists) {
+        return res.status(404).json({
+          success: false,
+          error: 'Metadata not found'
+        });
+      }
+      
+      // Send metadata file
+      res.sendFile(metadataPath);
+    } catch (error) {
+      logger.error(`Failed to get metadata for job ${jobId}:`, error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve metadata'
+      });
+    }
+  })
+);
+
+/**
  * GET /api/routing/health
  * Check OSRM service health
  */
@@ -339,6 +379,88 @@ router.post('/test',
       res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : 'Route calculation failed'
+      });
+    }
+  })
+);
+
+/**
+ * DELETE /api/routing/job/:jobId
+ * Cancel a running job and clean up all associated data
+ */
+router.delete('/job/:jobId',
+  [param('jobId').isUUID().withMessage('Invalid job ID')],
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid job ID format'
+      });
+    }
+
+    const { jobId } = req.params;
+    
+    try {
+      const cancelled = await jobService.cancelJob(jobId);
+      
+      if (cancelled) {
+        logger.info(`Job ${jobId} cancelled successfully`);
+        res.json({
+          success: true
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          error: 'Job not found or already completed'
+        });
+      }
+    } catch (error) {
+      logger.error(`Failed to cancel job ${jobId}:`, error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to cancel job'
+      });
+    }
+  })
+);
+
+/**
+ * DELETE /api/routing/job/:jobId/cleanup
+ * Clean up completed job files and data from server
+ */
+router.delete('/job/:jobId/cleanup',
+  [param('jobId').isUUID().withMessage('Invalid job ID')],
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid job ID format'
+      });
+    }
+
+    const { jobId } = req.params;
+    
+    try {
+      const cleaned = await jobService.cleanupJob(jobId);
+      
+      if (cleaned) {
+        logger.info(`Job ${jobId} cleaned up successfully`);
+        res.json({
+          success: true
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          error: 'Job not found'
+        });
+      }
+    } catch (error) {
+      logger.error(`Failed to cleanup job ${jobId}:`, error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to cleanup job'
       });
     }
   })

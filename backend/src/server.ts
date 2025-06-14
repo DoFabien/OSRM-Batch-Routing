@@ -88,11 +88,26 @@ const io = new SocketIOServer(server, {
   }
 });
 
-// Track client subscriptions to jobs
+// Track client subscriptions to jobs and user sessions
 const jobSubscriptions = new Map<string, Set<string>>();
+const userSessions = new Map<string, string>(); // userId -> socketId
+const socketUsers = new Map<string, string>(); // socketId -> userId
 
 io.on('connection', (socket) => {
   logger.info(`Socket.IO client connected: ${socket.id}`);
+  
+  // Handle user identification
+  socket.on('identify', (data: { userId: string }) => {
+    const { userId } = data;
+    logger.info(`Client ${socket.id} identified as user: ${userId}`);
+    
+    // Store user-socket mapping
+    userSessions.set(userId, socket.id);
+    socketUsers.set(socket.id, userId);
+    
+    // Join user-specific room
+    socket.join(`user-${userId}`);
+  });
   
   // Handle job subscription
   socket.on('subscribe', (jobId: string) => {
@@ -119,6 +134,15 @@ io.on('connection', (socket) => {
   
   socket.on('disconnect', () => {
     logger.info(`Socket.IO client disconnected: ${socket.id}`);
+    
+    // Clean up user session
+    const userId = socketUsers.get(socket.id);
+    if (userId) {
+      userSessions.delete(userId);
+      socketUsers.delete(socket.id);
+      logger.info(`Cleaned up session for user: ${userId}`);
+    }
+    
     // Clean up subscriptions for this client
     for (const [jobId, subscribers] of jobSubscriptions.entries()) {
       subscribers.delete(socket.id);

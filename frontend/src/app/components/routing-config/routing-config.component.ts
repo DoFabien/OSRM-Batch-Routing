@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
@@ -6,6 +6,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
 import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
 import { ApiService, Projection, BatchJobConfig, FileUploadResponse } from '../../services/api.service';
 import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/coordinate-detection.service';
@@ -20,6 +21,7 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
     MatSelectModule,
     MatButtonModule,
     MatIconModule,
+    MatInputModule,
     MatSnackBarModule
   ],
   template: `
@@ -103,6 +105,37 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
           <p><strong>Datum:</strong> {{ selectedProjection.datum }}</p>
           <p><strong>Proj4:</strong> <code>{{ selectedProjection.proj4 }}</code></p>
         </div>
+
+        <div class="geometry-options">
+          <h4>Export Options</h4>
+          <mat-form-field appearance="outline">
+            <mat-label>Geometry Type</mat-label>
+            <mat-select [(value)]="geometryType">
+              <mat-option value="complete">
+                <mat-icon>route</mat-icon>
+                Complete Geometry
+              </mat-option>
+              <mat-option value="simplified">
+                <mat-icon>show_chart</mat-icon>
+                Simplified Geometry
+              </mat-option>
+              <mat-option value="line">
+                <mat-icon>timeline</mat-icon>
+                Straight Line
+              </mat-option>
+            </mat-select>
+            <mat-hint>Choose how to export route geometries</mat-hint>
+          </mat-form-field>
+
+          <div *ngIf="geometryType === 'simplified'" class="simplification-settings">
+            <mat-form-field appearance="outline">
+              <mat-label>Simplification Tolerance</mat-label>
+              <input matInput type="number" [(ngModel)]="simplificationTolerance" 
+                     min="0.00001" max="0.01" step="0.00001">
+              <mat-hint>Higher values = more simplification (0.0001 recommended)</mat-hint>
+            </mat-form-field>
+          </div>
+        </div>
       </mat-card-content>
 
       <mat-card-actions align="end">
@@ -174,6 +207,21 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
       margin-right: 0.5rem;
     }
 
+    .geometry-options {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .geometry-options h4 {
+      margin-bottom: 1rem;
+      color: #333;
+    }
+
+    .simplification-settings {
+      margin-top: 1rem;
+    }
+
     @media (max-width: 768px) {
       .coordinate-fields {
         grid-template-columns: 1fr;
@@ -181,7 +229,7 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
     }
   `]
 })
-export class RoutingConfigComponent implements OnInit {
+export class RoutingConfigComponent implements OnInit, OnChanges {
   @Input() fileData: FileUploadResponse['data'] | null = null;
   @Output() jobStarted = new EventEmitter<string>();
 
@@ -198,6 +246,10 @@ export class RoutingConfigComponent implements OnInit {
   coordinateHeaders: string[] = [];
   coordinateAnalysis: CoordinateAnalysis[] = [];
   isAnalyzing = false;
+  
+  // Geometry options
+  geometryType: 'complete' | 'simplified' | 'line' = 'complete';
+  simplificationTolerance = 0.0001;
 
   constructor(
     private apiService: ApiService,
@@ -206,8 +258,16 @@ export class RoutingConfigComponent implements OnInit {
   ) {}
 
   ngOnInit() {
+    console.log('RoutingConfig ngOnInit - fileData:', this.fileData);
     this.loadProjections();
     this.autoSelectFields();
+  }
+
+  ngOnChanges() {
+    console.log('RoutingConfig ngOnChanges - fileData:', this.fileData);
+    if (this.fileData) {
+      this.autoSelectFields();
+    }
   }
 
   private loadProjections() {
@@ -238,38 +298,58 @@ export class RoutingConfigComponent implements OnInit {
   }
 
   private async analyzeCoordinateFields() {
-    if (!this.fileData) return;
+    if (!this.fileData) {
+      console.log('No file data available for coordinate analysis');
+      return;
+    }
 
+    console.log('Starting coordinate analysis for file:', this.fileData.filename);
     this.isAnalyzing = true;
     
     try {
       // Get sample data from the uploaded file
+      console.log('Fetching sample data for file ID:', this.fileData.id);
       const sampleResponse = await this.apiService.getFileSample(this.fileData.id, 10).toPromise();
       
+      console.log('Sample response:', sampleResponse);
+      
       if (sampleResponse?.success && sampleResponse.data) {
+        console.log('Sample data received:', {
+          headers: sampleResponse.data.headers,
+          sampleCount: sampleResponse.data.sample.length,
+          firstRow: sampleResponse.data.sample[0]
+        });
+
         // Analyze the coordinate fields using the data
         this.coordinateAnalysis = this.coordinateDetection.analyzeCoordinateFields(
           sampleResponse.data.headers,
           sampleResponse.data.sample
         );
 
+        console.log('Coordinate analysis results:', this.coordinateAnalysis);
+
         // Filter to show only coordinate fields
         this.coordinateHeaders = this.coordinateDetection
           .getCoordinateFields(this.coordinateAnalysis, 50)
           .map(analysis => analysis.fieldName);
 
+        console.log('Filtered coordinate headers:', this.coordinateHeaders);
+
         // Auto-select the best fields
         const autoSelection = this.coordinateDetection.autoSelectBestFields(this.coordinateAnalysis);
+        
+        console.log('Auto-selection result:', autoSelection);
         
         this.originX = autoSelection.originX || '';
         this.originY = autoSelection.originY || '';
         this.destX = autoSelection.destX || '';
         this.destY = autoSelection.destY || '';
 
-        console.log('Coordinate analysis completed:', {
-          analysis: this.coordinateAnalysis,
-          coordinateFields: this.coordinateHeaders,
-          autoSelection
+        console.log('Fields assigned:', {
+          originX: this.originX,
+          originY: this.originY,
+          destX: this.destX,
+          destY: this.destY
         });
 
       } else {
@@ -281,6 +361,7 @@ export class RoutingConfigComponent implements OnInit {
       this.fallbackToHeaderDetection();
     } finally {
       this.isAnalyzing = false;
+      console.log('Coordinate analysis completed');
     }
   }
 
@@ -352,6 +433,12 @@ export class RoutingConfigComponent implements OnInit {
       destinationFields: {
         x: this.destX,
         y: this.destY
+      },
+      geometryOptions: {
+        exportGeometry: true,
+        straightLineGeometry: this.geometryType === 'line',
+        simplifyGeometry: this.geometryType === 'simplified',
+        simplificationTolerance: this.geometryType === 'simplified' ? this.simplificationTolerance : undefined
       }
     };
 

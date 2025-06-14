@@ -23,6 +23,7 @@ export class CoordinateDetectionService {
 
   /**
    * Analyse un échantillon de données pour détecter les champs de coordonnées
+   * Version: 2.0 - Force rebuild
    */
   analyzeCoordinateFields(headers: string[], sampleData: Record<string, string>[]): CoordinateAnalysis[] {
     return headers.map(header => this.analyzeField(header, sampleData));
@@ -130,13 +131,19 @@ export class CoordinateDetectionService {
 
     // Mots-clés pour destination  
     const destKeywords = [
-      'dest', 'destination', 'end', 'target', 'to', 'arrive', 'aurh', 'com_aurh', 'fin'
+      'dest', 'destination', 'end', 'target', 'to', 'arrive', 'aurh', 'com_aurh', 'fin', 'com'
     ];
 
     const hasCoordinateKeyword = coordinateKeywords.some(keyword => lowerField.includes(keyword));
     
     let typeHint = 'unknown';
-    if (originKeywords.some(keyword => lowerField.includes(keyword))) {
+    
+    // Vérifier d'abord les mots-clés les plus spécifiques
+    if (lowerField.includes('smur')) {
+      typeHint = 'origin';
+    } else if (lowerField.includes('com_') || (lowerField.startsWith('com') && hasCoordinateKeyword)) {
+      typeHint = 'dest';
+    } else if (originKeywords.some(keyword => lowerField.includes(keyword))) {
       typeHint = 'origin';
     } else if (destKeywords.some(keyword => lowerField.includes(keyword))) {
       typeHint = 'dest';
@@ -227,6 +234,9 @@ export class CoordinateDetectionService {
       coordType = 'Y';
     }
 
+    // Log pour debug
+    console.log(`Field ${fieldName}: typeHint=${typeHint}, coordType=${coordType}, isX=${isX}, isY=${isY}`);
+
     // Combiner avec le type (origin/dest)
     if (coordType === 'X') {
       return typeHint === 'dest' ? 'destX' : 'originX';
@@ -263,11 +273,44 @@ export class CoordinateDetectionService {
       return candidates.length > 0 ? candidates[0].fieldName : null;
     };
 
-    return {
+    // Essayer d'abord avec les suggestions basées sur les mots-clés
+    let result = {
       originX: findBestField('originX'),
       originY: findBestField('originY'),
       destX: findBestField('destX'),
       destY: findBestField('destY')
     };
+
+    // Si on n'a pas trouvé de destination avec les mots-clés,
+    // utiliser la logique: 1ère paire = origine, 2ème paire = destination
+    if (!result.destX || !result.destY) {
+      console.log('No destination found with keywords, using position-based logic');
+      
+      // Filtrer les champs X et Y
+      const xFields = coordinateFields
+        .filter(f => f.fieldName.toLowerCase().includes('lon') || f.fieldName.toLowerCase().includes('x'))
+        .sort((a, b) => analyses.indexOf(a) - analyses.indexOf(b)); // Garder l'ordre original
+      
+      const yFields = coordinateFields
+        .filter(f => f.fieldName.toLowerCase().includes('lat') || f.fieldName.toLowerCase().includes('y'))
+        .sort((a, b) => analyses.indexOf(a) - analyses.indexOf(b)); // Garder l'ordre original
+
+      console.log('Found X fields:', xFields.map(f => f.fieldName));
+      console.log('Found Y fields:', yFields.map(f => f.fieldName));
+
+      // Si on a au moins 2 paires de coordonnées
+      if (xFields.length >= 2 && yFields.length >= 2) {
+        // 1ère paire = origine (si pas déjà trouvée)
+        if (!result.originX) result.originX = xFields[0].fieldName;
+        if (!result.originY) result.originY = yFields[0].fieldName;
+        
+        // 2ème paire = destination
+        result.destX = xFields[1].fieldName;
+        result.destY = yFields[1].fieldName;
+      }
+    }
+
+    console.log('Final auto-selection:', result);
+    return result;
   }
 }

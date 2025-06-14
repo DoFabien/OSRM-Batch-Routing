@@ -31,6 +31,9 @@ export class ResultService {
   async saveGeoJSONResults(jobId: string, results: RouteResult[], summary: any, configuration?: RouteConfiguration, job?: BatchJob): Promise<string> {
     const filename = `routing_results_${jobId}.geojson`;
     const filePath = path.join(this.resultsDir, filename);
+    
+    // Also save metadata separately
+    await this.saveMetadata(jobId, summary, configuration, job);
 
     try {
       // Create write stream for efficient large file handling
@@ -44,6 +47,8 @@ export class ResultService {
       // Stream features one by one to avoid memory issues
       let featureCount = 0;
       let hasFeatures = false;
+
+      logger.info(`Writing ${results.length} results to GeoJSON for job ${jobId}`);
 
       for (const result of results) {
         if (result.success && result.route) {
@@ -86,40 +91,17 @@ export class ResultService {
 
           featureCount++;
           hasFeatures = true;
+        } else if (!result.success) {
+          logger.debug(`Skipping failed result for rowIndex ${result.rowIndex}: ${result.error}`);
+        } else if (!result.route) {
+          logger.warn(`Skipping result for rowIndex ${result.rowIndex}: no route data`);
         }
       }
-
-      // Calculate job execution duration
-      let jobDuration = 0;
-      let jobDurationSeconds = 0;
-      if (job?.startedAt) {
-        const endTime = job.completedAt || new Date();
-        jobDuration = endTime.getTime() - job.startedAt.getTime();
-        jobDurationSeconds = Math.round(jobDuration / 1000);
-      }
-
-      // Close features array and add metadata
-      writeStream.write('\n  ],\n');
-      writeStream.write('  "metadata": {\n');
-      writeStream.write(`    "jobId": "${jobId}",\n`);
-      writeStream.write('    "summary": ' + JSON.stringify(summary, null, 4).split('\n').map(line => '    ' + line).join('\n') + ',\n');
-      writeStream.write(`    "generatedAt": "${new Date().toISOString()}",\n`);
-      writeStream.write(`    "totalFeatures": ${featureCount}`);
       
-      // Add job timing information
-      if (job?.startedAt) {
-        writeStream.write(',\n');
-        writeStream.write(`    "jobStartedAt": "${job.startedAt.toISOString()}"`);
-        if (job.completedAt) {
-          writeStream.write(',\n');
-          writeStream.write(`    "jobCompletedAt": "${job.completedAt.toISOString()}"`);
-        }
-        writeStream.write(',\n');
-        writeStream.write(`    "jobDurationMs": ${jobDuration},\n`);
-        writeStream.write(`    "jobDurationSeconds": ${jobDurationSeconds}`);
-      }
-      
-      writeStream.write('\n  }\n');
+      logger.info(`Written ${featureCount} features out of ${results.length} results`);
+
+      // Close features array - NO metadata in GeoJSON
+      writeStream.write('\n  ]\n');
       writeStream.write('}\n');
 
       // Close the stream and wait for completion
@@ -138,7 +120,6 @@ export class ResultService {
         jobId,
         features: featureCount,
         fileSizeMB: `${fileSizeMB}MB`,
-        jobDurationSeconds,
         path: filePath
       });
 
@@ -152,6 +133,55 @@ export class ResultService {
         logger.error(`Failed to cleanup partial file ${filePath}:`, cleanupError);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Save metadata to a separate JSON file
+   */
+  async saveMetadata(jobId: string, summary: any, configuration?: RouteConfiguration, job?: BatchJob): Promise<void> {
+    const filename = `routing_metadata_${jobId}.json`;
+    const filePath = path.join(this.resultsDir, filename);
+
+    try {
+      // Calculate job execution duration
+      let jobDuration = 0;
+      let jobDurationSeconds = 0;
+      if (job?.startedAt) {
+        const endTime = job.completedAt || new Date();
+        jobDuration = endTime.getTime() - job.startedAt.getTime();
+        jobDurationSeconds = Math.round(jobDuration / 1000);
+      }
+
+      const metadata = {
+        jobId,
+        summary,
+        generatedAt: new Date().toISOString(),
+        configuration: {
+          projection: configuration?.projection,
+          originFields: configuration?.originFields,
+          destinationFields: configuration?.destinationFields,
+          geometryOptions: configuration?.geometryOptions
+        },
+        jobTiming: job?.startedAt ? {
+          startedAt: job.startedAt.toISOString(),
+          completedAt: job.completedAt?.toISOString(),
+          durationMs: jobDuration,
+          durationSeconds: jobDurationSeconds
+        } : undefined,
+        files: {
+          geojson: `routing_results_${jobId}.geojson`,
+          metadata: filename
+        }
+      };
+
+      // Write metadata as pretty-printed JSON
+      await fs.writeFile(filePath, JSON.stringify(metadata, null, 2), 'utf8');
+      
+      logger.info(`Metadata saved successfully: ${filename}`);
+    } catch (error) {
+      logger.error(`Failed to save metadata for job ${jobId}:`, error);
+      // Non-fatal error - continue even if metadata save fails
     }
   }
 
@@ -287,6 +317,28 @@ export class ResultService {
   }
 
   /**
+   * Get metadata file path for a job
+   */
+  getMetadataFilePath(jobId: string): string {
+    const filename = `routing_metadata_${jobId}.json`;
+    return path.join(this.resultsDir, filename);
+  }
+
+  /**
+   * Check if metadata file exists for a job
+   */
+  async hasMetadataFile(jobId: string): Promise<boolean> {
+    const filePath = this.getMetadataFilePath(jobId);
+    
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Get GeoJSON file stats
    */
   async getGeoJSONFileStats(jobId: string): Promise<{ size: number; created: Date } | null> {
@@ -307,9 +359,20 @@ export class ResultService {
    */
   async deleteGeoJSONFile(jobId: string): Promise<void> {
     try {
+      // Delete GeoJSON file
       const filePath = this.getGeoJSONFilePath(jobId);
       await fs.unlink(filePath);
       logger.info(`GeoJSON file deleted: ${jobId}`);
+      
+      // Also delete metadata file
+      const metadataPath = path.join(this.resultsDir, `routing_metadata_${jobId}.json`);
+      try {
+        await fs.unlink(metadataPath);
+        logger.info(`Metadata file deleted: ${jobId}`);
+      } catch (error) {
+        // Metadata file might not exist - that's ok
+        logger.debug(`Metadata file not found for job ${jobId}`);
+      }
     } catch (error) {
       logger.error(`Failed to delete GeoJSON file for job ${jobId}:`, error);
       throw error;
@@ -355,6 +418,17 @@ export class ResultService {
           await fs.unlink(file.filePath);
           deletedCount++;
           deletedSize += stats.size;
+          
+          // Also try to delete associated metadata file
+          const jobId = file.filename.replace('routing_results_', '').replace('.geojson', '');
+          const metadataPath = path.join(this.resultsDir, `routing_metadata_${jobId}.json`);
+          try {
+            const metaStats = await fs.stat(metadataPath);
+            await fs.unlink(metadataPath);
+            deletedSize += metaStats.size;
+          } catch {
+            // Metadata file might not exist
+          }
         } catch (error) {
           logger.error(`Failed to delete old result file ${file.filename}:`, error);
         }

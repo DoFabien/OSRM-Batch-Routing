@@ -27,7 +27,7 @@ export class OSRMService {
       logger.debug(`OSRM request: ${url}`);
       
       const response = await axios.get<OSRMResponse>(url, {
-        timeout: 10000,
+        timeout: 30000, // Increased timeout for heavy load
         headers: {
           'Accept': 'application/json',
         }
@@ -79,7 +79,7 @@ export class OSRMService {
   }
 
   /**
-   * Calculate multiple routes in batch
+   * Calculate multiple routes in batch with MASSIVE PARALLELIZATION
    */
   async calculateBatchRoutes(
     coordinates: Array<{
@@ -101,59 +101,85 @@ export class OSRMService {
     };
     error?: string;
   }>> {
-    const results = [];
+    const maxConcurrent = parseInt(process.env['OSRM_MAX_CONCURRENT'] || '50'); // MASSIVE concurrent requests
     
-    for (const coord of coordinates) {
-      try {
-        const osrmResponse = await this.calculateRoute(
-          coord.originLng,
-          coord.originLat,
-          coord.destLng,
-          coord.destLat
-        );
+    // Process in chunks of maxConcurrent for true parallelization
+    const results: Array<{
+      rowIndex: number;
+      originalData: Record<string, string>;
+      success: boolean;
+      route?: {
+        distance: number;
+        duration: number;
+        geometry: LineString;
+      };
+      error?: string;
+    }> = [];
+    
+    for (let i = 0; i < coordinates.length; i += maxConcurrent) {
+      const chunk = coordinates.slice(i, i + maxConcurrent);
+      
+      // Fire ALL requests in this chunk SIMULTANEOUSLY
+      const promises = chunk.map(async (coord) => {
+        try {
+          const osrmResponse = await this.calculateRoute(
+            coord.originLng,
+            coord.originLat,
+            coord.destLng,
+            coord.destLat
+          );
 
-        if (osrmResponse.routes && osrmResponse.routes.length > 0) {
-          const route = osrmResponse.routes[0];
-          if (route && route.geometry) {
-            results.push({
-              rowIndex: coord.rowIndex,
-              originalData: coord.originalData,
-              success: true,
-              route: {
-                distance: route.distance,
-                duration: route.duration,
-                geometry: route.geometry as LineString
-              }
-            });
+          if (osrmResponse.routes && osrmResponse.routes.length > 0) {
+            const route = osrmResponse.routes[0];
+            if (route && route.geometry) {
+              return {
+                rowIndex: coord.rowIndex,
+                originalData: coord.originalData,
+                success: true,
+                route: {
+                  distance: route.distance,
+                  duration: route.duration,
+                  geometry: route.geometry as LineString
+                }
+              };
+            } else {
+              return {
+                rowIndex: coord.rowIndex,
+                originalData: coord.originalData,
+                success: false,
+                error: 'Invalid route data'
+              };
+            }
           } else {
-            results.push({
+            return {
               rowIndex: coord.rowIndex,
               originalData: coord.originalData,
               success: false,
-              error: 'Invalid route data'
-            });
+              error: 'No route found'
+            };
           }
-        } else {
-          results.push({
+        } catch (error) {
+          logger.error(`Route calculation failed for row ${coord.rowIndex}:`, error);
+          return {
             rowIndex: coord.rowIndex,
             originalData: coord.originalData,
             success: false,
-            error: 'No route found'
-          });
+            error: error instanceof Error ? error.message : 'Unknown error'
+          };
         }
-        
-        // Configurable delay to avoid overwhelming OSRM
-        await new Promise(resolve => setTimeout(resolve, this.requestDelay));
-        
-      } catch (error) {
-        logger.error(`Route calculation failed for row ${coord.rowIndex}:`, error);
-        results.push({
-          rowIndex: coord.rowIndex,
-          originalData: coord.originalData,
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+      });
+      
+      // Wait for ALL requests in this chunk to complete
+      const chunkResults = await Promise.allSettled(promises);
+      
+      // Extract results from settled promises
+      chunkResults.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        }
+      });
+      
+      logger.info(`Processed chunk ${Math.floor(i/maxConcurrent) + 1}/${Math.ceil(coordinates.length/maxConcurrent)} - ${chunkResults.length} routes calculated in parallel`);
     }
     
     return results;

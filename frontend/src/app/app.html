@@ -39,7 +39,7 @@
 
       <mat-step label="Monitor Job">
         <div class="step-content">
-          <app-job-monitor [jobId]="currentJobId"></app-job-monitor>
+          <app-job-monitor [jobId]="currentJobId" (newJobRequested)="resetApplication()"></app-job-monitor>
         </div>
         <div class="stepper-actions">
           <button mat-button matStepperPrevious>

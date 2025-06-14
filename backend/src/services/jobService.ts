@@ -53,7 +53,13 @@ export class JobService {
 
     this.jobs.set(jobId, job);
     
-    logger.info(`Created batch job ${jobId} for file ${configuration.fileId}`);
+    logger.info(`Created batch job ${jobId} for file ${configuration.fileId}`, {
+      projection: configuration.projection?.code,
+      originFields: configuration.originFields,
+      destinationFields: configuration.destinationFields,
+      geometryOptions: configuration.geometryOptions,
+      totalRows: file.rowCount
+    });
     
     // Start processing asynchronously
     this.processJob(jobId).catch(error => {
@@ -98,7 +104,7 @@ export class JobService {
       }
 
       const results: RouteResult[] = [];
-      const batchSize = parseInt(process.env['BATCH_SIZE'] || '25'); // Configurable batch size
+      const batchSize = parseInt(process.env['BATCH_SIZE'] || '100'); // Optimized batch size for performance
 
       // Process data in batches
       for (let i = 0; i < fileData.length; i += batchSize) {
@@ -208,6 +214,8 @@ export class JobService {
       // Store results in memory and save to disk
       this.jobResults.set(jobId, results);
       
+      logger.info(`Storing ${results.length} results for job ${jobId}`);
+      
       // Calculate summary for GeoJSON
       const successful = results.filter(r => r.success);
       const totalDistance = successful.reduce((sum, r) => sum + (r.route?.distance || 0), 0);
@@ -220,6 +228,8 @@ export class JobService {
         totalDistance,
         totalDuration
       };
+      
+      logger.info(`Job ${jobId} summary:`, summary);
 
       // Calculate job duration before completion
       const jobDuration = job.startedAt ? Date.now() - job.startedAt.getTime() : 0;
@@ -333,6 +343,48 @@ export class JobService {
   }
 
   /**
+   * Cancel a running job and clean up all associated data
+   */
+  async cancelJob(jobId: string): Promise<boolean> {
+    const job = this.jobs.get(jobId);
+    
+    if (!job) {
+      logger.warn(`Attempted to cancel non-existent job: ${jobId}`);
+      return false;
+    }
+    
+    if (job.status === 'completed' || job.status === 'failed') {
+      logger.warn(`Attempted to cancel already finished job: ${jobId} (status: ${job.status})`);
+      return false;
+    }
+    
+    logger.info(`Cancelling job ${jobId}`);
+    
+    // Update job status
+    this.updateJobStatus(jobId, 'failed', 'Job cancelled by user');
+    
+    // Clean up associated data
+    this.jobResults.delete(jobId);
+    
+    // Clean up any GeoJSON file
+    try {
+      const hasFile = await resultService.hasGeoJSONFile(jobId);
+      if (hasFile) {
+        await resultService.deleteGeoJSONFile(jobId);
+        logger.info(`Deleted GeoJSON file for cancelled job ${jobId}`);
+      }
+    } catch (error) {
+      logger.error(`Failed to delete GeoJSON file for job ${jobId}:`, error);
+    }
+    
+    // Send cancellation update via WebSocket
+    this.sendStatusUpdate(jobId, 'failed');
+    
+    logger.info(`Job ${jobId} cancelled and cleaned up successfully`);
+    return true;
+  }
+
+  /**
    * Generate export data
    */
   generateExport(jobId: string): BatchResult | null {
@@ -406,6 +458,53 @@ export class JobService {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined as NodeJS.Timeout | undefined;
       logger.info('Job cleanup scheduler stopped');
+    }
+  }
+
+  /**
+   * Clean up a specific job and all associated data (public method)
+   */
+  async cleanupJob(jobId: string): Promise<boolean> {
+    try {
+      const job = this.jobs.get(jobId);
+      if (!job) {
+        logger.warn(`Attempted to cleanup non-existent job: ${jobId}`);
+        return false;
+      }
+
+      logger.info(`Cleaning up job ${jobId}`);
+
+      // Clean up associated file
+      if (job.fileId) {
+        try {
+          await fileService.deleteFile(job.fileId);
+          logger.info(`Deleted file ${job.fileId} for job ${jobId}`);
+        } catch (error) {
+          logger.warn(`Failed to cleanup file ${job.fileId} for job ${jobId}:`, error);
+        }
+      }
+
+      // Clean up any GeoJSON file
+      try {
+        const hasFile = await resultService.hasGeoJSONFile(jobId);
+        if (hasFile) {
+          await resultService.deleteGeoJSONFile(jobId);
+          logger.info(`Deleted GeoJSON file for job ${jobId}`);
+        }
+      } catch (error) {
+        logger.error(`Failed to delete GeoJSON file for job ${jobId}:`, error);
+      }
+
+      // Remove job and results from memory
+      this.jobs.delete(jobId);
+      this.jobResults.delete(jobId);
+
+      logger.info(`Job ${jobId} cleaned up successfully`);
+      return true;
+
+    } catch (error) {
+      logger.error(`Failed to cleanup job ${jobId}:`, error);
+      return false;
     }
   }
 

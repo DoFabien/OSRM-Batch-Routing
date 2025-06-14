@@ -47,6 +47,12 @@ export interface BatchJobConfig {
     x: string;
     y: string;
   };
+  geometryOptions?: {
+    exportGeometry: boolean;
+    straightLineGeometry: boolean;
+    simplifyGeometry: boolean;
+    simplificationTolerance?: number;
+  };
 }
 
 export interface BatchJobResponse {
@@ -102,7 +108,22 @@ export interface JobMetadata {
     totalDuration: number;
   };
   generatedAt: string;
-  totalFeatures: number;
+  configuration?: {
+    projection?: any;
+    originFields?: any;
+    destinationFields?: any;
+    geometryOptions?: any;
+  };
+  jobTiming?: {
+    startedAt: string;
+    completedAt?: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  files: {
+    geojson: string;
+    metadata: string;
+  };
 }
 
 @Injectable({
@@ -157,13 +178,20 @@ export class ApiService {
   }
 
   getJobMetadata(jobId: string): Observable<JobMetadata | null> {
-    return this.http.get<any>(`${this.baseUrl}/routing/export/${jobId}`).pipe(
-      map(geojson => geojson.metadata || null),
+    return this.http.get<JobMetadata>(`${this.baseUrl}/routing/metadata/${jobId}`).pipe(
       catchError(() => of(null))
     );
   }
 
   checkHealth(): Observable<any> {
     return this.http.get(`${this.baseUrl}/health`);
+  }
+  
+  cancelJob(jobId: string): Observable<{ success: boolean }> {
+    return this.http.delete<{ success: boolean }>(`${this.baseUrl}/routing/job/${jobId}`);
+  }
+  
+  cleanupJob(jobId: string): Observable<{ success: boolean }> {
+    return this.http.delete<{ success: boolean }>(`${this.baseUrl}/routing/job/${jobId}/cleanup`);
   }
 }
