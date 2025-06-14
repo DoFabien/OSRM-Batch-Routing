@@ -17,17 +17,14 @@ const app = express();
 const PORT = process.env['PORT'] || 80;
 const OSRM_URL = process.env['OSRM_URL'] || 'http://localhost:5000';
 
-// Security middleware
+// Security middleware - disabled for maximum compatibility
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "https:"],
-      scriptSrc: ["'self'"],
-    },
-  },
+  contentSecurityPolicy: false,
+  crossOriginOpenerPolicy: false,
+  originAgentCluster: false,
+  hsts: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
 }));
 
 // Rate limiting - Increased for batch processing
@@ -39,7 +36,10 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // General middleware
-app.use(cors());
+app.use(cors({
+  origin: true, // Allow all origins
+  credentials: true
+}));
 app.use(compression());
 app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
 app.use(express.json({ limit: '50mb' }));
