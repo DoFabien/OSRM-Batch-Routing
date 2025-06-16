@@ -177,6 +177,12 @@ export class ApiService {
     return this.http.get(`${this.baseUrl}/routing/export/${jobId}`);
   }
 
+  exportJobAsGeoPackage(jobId: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/routing/export/${jobId}/geopackage`, {
+      responseType: 'blob'
+    });
+  }
+
   getJobMetadata(jobId: string): Observable<JobMetadata | null> {
     return this.http.get<JobMetadata>(`${this.baseUrl}/routing/metadata/${jobId}`).pipe(
       catchError(() => of(null))

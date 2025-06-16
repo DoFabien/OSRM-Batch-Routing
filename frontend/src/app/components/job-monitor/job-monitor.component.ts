@@ -180,6 +180,14 @@ import { SessionService } from '../../services/session.service';
         </button>
         
         <button mat-raised-button 
+                color="primary"
+                (click)="downloadGeoPackage()"
+                [disabled]="jobStatus.status !== 'completed'">
+          <mat-icon>download</mat-icon>
+          Download GeoPackage
+        </button>
+        
+        <button mat-raised-button 
                 color="accent"
                 *ngIf="jobStatus.status === 'completed' || jobStatus.status === 'failed'"
                 (click)="startNewJob()">
@@ -628,6 +636,36 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
       },
       error: (error) => {
         this.snackBar.open('Failed to download GeoJSON', 'Close', {
+          duration: 3000
+        });
+      }
+    });
+  }
+
+  downloadGeoPackage() {
+    if (this.jobStatus?.status !== 'completed') return;
+
+    this.snackBar.open('Preparing GeoPackage download...', 'Close', {
+      duration: 2000
+    });
+
+    this.apiService.exportJobAsGeoPackage(this.jobId).subscribe({
+      next: (blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `routing-results-${this.jobId}.gpkg`;
+        link.click();
+        
+        window.URL.revokeObjectURL(url);
+        
+        this.snackBar.open('GeoPackage downloaded successfully!', 'Close', {
+          duration: 3000
+        });
+      },
+      error: (error) => {
+        console.error('GeoPackage download error:', error);
+        this.snackBar.open('Failed to download GeoPackage', 'Close', {
           duration: 3000
         });
       }
