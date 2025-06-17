@@ -39,6 +39,7 @@ export interface RouteConfiguration {
     simplificationTolerance?: number;
     straightLineGeometry: boolean;
   };
+  outputFormat?: string;
 }
 
 export interface BatchJob {
@@ -55,6 +56,7 @@ export interface BatchJob {
   startedAt?: Date;
   completedAt?: Date;
   error?: string;
+  geoPackagePath?: string; // Chemin vers le GeoPackage créé pour ce job
 }
 
 export interface RouteResult {
@@ -98,6 +100,25 @@ export interface ValidationError {
   field: string;
   message: string;
   value?: unknown;
+}
+
+export interface GeographicBounds {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+}
+
+export interface CoordinateValidationResult {
+  isValid: boolean;
+  invalidCount: number;
+  invalidRows: Array<{
+    rowIndex: number;
+    lat: number;
+    lon: number;
+    reason: string;
+  }>;
+  bounds: GeographicBounds;
 }
 
 export interface ApiResponse<T = unknown> {

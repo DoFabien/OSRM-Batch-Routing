@@ -173,18 +173,10 @@ import { SessionService } from '../../services/session.service';
         
         <button mat-raised-button 
                 color="primary"
-                (click)="downloadGeoJSON()"
+                (click)="downloadResults()"
                 [disabled]="jobStatus.status !== 'completed'">
           <mat-icon>download</mat-icon>
-          Download GeoJSON
-        </button>
-        
-        <button mat-raised-button 
-                color="primary"
-                (click)="downloadGeoPackage()"
-                [disabled]="jobStatus.status !== 'completed'">
-          <mat-icon>download</mat-icon>
-          Download GeoPackage
+          Download {{ getOutputFormatLabel() }}
         </button>
         
         <button mat-raised-button 
@@ -613,15 +605,31 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
     });
   }
 
-  downloadGeoJSON() {
+  getOutputFormatLabel(): string {
+    if (!this.jobStatus?.configuration?.outputFormat) return 'Results';
+    
+    switch (this.jobStatus.configuration.outputFormat) {
+      case 'geojson': return 'GeoJSON';
+      case 'geopackage': return 'GeoPackage';
+      default: return 'Results';
+    }
+  }
+
+  downloadResults() {
     if (this.jobStatus?.status !== 'completed') return;
 
+    const format = this.jobStatus.configuration?.outputFormat || 'geojson';
+    
+    if (format === 'geopackage') {
+      this.downloadGeoPackage();
+    } else {
+      this.downloadGeoJSON();
+    }
+  }
+
+  private downloadGeoJSON() {
     this.apiService.exportJobAsGeoJSON(this.jobId).subscribe({
-      next: (geoJSON) => {
-        const blob = new Blob([JSON.stringify(geoJSON, null, 2)], {
-          type: 'application/json'
-        });
-        
+      next: (blob) => {
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -642,9 +650,7 @@ export class JobMonitorComponent implements OnInit, OnDestroy, OnChanges {
     });
   }
 
-  downloadGeoPackage() {
-    if (this.jobStatus?.status !== 'completed') return;
-
+  private downloadGeoPackage() {
     this.snackBar.open('Preparing GeoPackage download...', 'Close', {
       duration: 2000
     });

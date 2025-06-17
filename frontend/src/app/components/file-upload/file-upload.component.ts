@@ -59,20 +59,10 @@ import { ApiService, FileUploadResponse } from '../../services/api.service';
         <mat-progress-bar *ngIf="uploading" mode="indeterminate"></mat-progress-bar>
       </mat-card-content>
 
-      <mat-card-actions align="end">
+      <mat-card-actions align="end" *ngIf="selectedFile && !uploading">
         <button mat-button 
-                *ngIf="selectedFile" 
-                (click)="clearFile()"
-                [disabled]="uploading">
+                (click)="clearFile()">
           Clear
-        </button>
-        <button mat-raised-button 
-                color="primary"
-                *ngIf="selectedFile"
-                (click)="uploadFile()"
-                [disabled]="uploading">
-          <mat-icon>upload</mat-icon>
-          Upload
         </button>
       </mat-card-actions>
     </mat-card>
@@ -190,6 +180,8 @@ export class FileUploadComponent implements OnInit {
     }
 
     this.selectedFile = file;
+    // Auto-upload file immediately when selected
+    this.uploadFile();
   }
 
   private isValidFile(file: File): boolean {

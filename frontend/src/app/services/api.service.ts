@@ -53,6 +53,7 @@ export interface BatchJobConfig {
     simplifyGeometry: boolean;
     simplificationTolerance?: number;
   };
+  outputFormat?: string;
 }
 
 export interface BatchJobResponse {
@@ -173,12 +174,20 @@ export class ApiService {
     return this.http.get<{ success: boolean; data: JobResults }>(`${this.baseUrl}/routing/results/${jobId}`);
   }
 
-  exportJobAsGeoJSON(jobId: string): Observable<any> {
-    return this.http.get(`${this.baseUrl}/routing/export/${jobId}`);
+  exportJobAsGeoJSON(jobId: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/routing/export/${jobId}/geojson`, {
+      responseType: 'blob'
+    });
   }
 
   exportJobAsGeoPackage(jobId: string): Observable<Blob> {
     return this.http.get(`${this.baseUrl}/routing/export/${jobId}/geopackage`, {
+      responseType: 'blob'
+    });
+  }
+
+  exportJobInFormat(jobId: string, format: string): Observable<Blob> {
+    return this.http.get(`${this.baseUrl}/routing/export/${jobId}/${format}`, {
       responseType: 'blob'
     });
   }

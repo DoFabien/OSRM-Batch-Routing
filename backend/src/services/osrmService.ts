@@ -24,8 +24,6 @@ export class OSRMService {
     try {
       const url = `${this.baseUrl}/route/v1/driving/${originLng},${originLat};${destLng},${destLat}?overview=full&geometries=geojson`;
       
-      logger.debug(`OSRM request: ${url}`);
-      
       const response = await axios.get<OSRMResponse>(url, {
         timeout: 30000, // Increased timeout for heavy load
         headers: {
@@ -178,8 +176,6 @@ export class OSRMService {
           results.push(result.value);
         }
       });
-      
-      logger.info(`Processed chunk ${Math.floor(i/maxConcurrent) + 1}/${Math.ceil(coordinates.length/maxConcurrent)} - ${chunkResults.length} routes calculated in parallel`);
     }
     
     return results;

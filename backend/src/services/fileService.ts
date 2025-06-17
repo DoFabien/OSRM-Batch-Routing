@@ -3,8 +3,9 @@ import path from 'path';
 import csv from 'csvtojson';
 import { v4 as uuidv4 } from 'uuid';
 import chardet from 'chardet';
-import { UploadedFile, ValidationError } from '@/types';
+import { UploadedFile, ValidationError, CoordinateValidationResult, RouteConfiguration } from '@/types';
 import { logger } from '@/utils/logger';
+import { validateCoordinatesInFrance, getFranceCoverageDescription } from './geographicValidationService';
 
 export class FileService {
   private readonly uploadDir = process.env['UPLOAD_DIR'] || './uploads';
@@ -331,6 +332,86 @@ export class FileService {
       this.cleanupTimer = undefined as NodeJS.Timeout | undefined;
       logger.info('File cleanup scheduler stopped');
     }
+  }
+
+  /**
+   * Valide les coordonnées d'un fichier par rapport au périmètre France métropolitaine + Corse
+   */
+  async validateGeographicBounds(
+    fileId: string, 
+    configuration: RouteConfiguration
+  ): Promise<CoordinateValidationResult> {
+    try {
+      const data = await this.getFileData(fileId);
+      const coordinates: Array<{ lat: number; lon: number; rowIndex: number }> = [];
+
+      // Extraire les coordonnées origine et destination
+      data.forEach((row, index) => {
+        // Coordonnées origine
+        const originLat = this.parseNumber(row[configuration.originFields.y], configuration.projection);
+        const originLon = this.parseNumber(row[configuration.originFields.x], configuration.projection);
+        
+        if (!isNaN(originLat) && !isNaN(originLon)) {
+          coordinates.push({ lat: originLat, lon: originLon, rowIndex: index });
+        }
+
+        // Coordonnées destination
+        const destLat = this.parseNumber(row[configuration.destinationFields.y], configuration.projection);
+        const destLon = this.parseNumber(row[configuration.destinationFields.x], configuration.projection);
+        
+        if (!isNaN(destLat) && !isNaN(destLon)) {
+          coordinates.push({ lat: destLat, lon: destLon, rowIndex: index });
+        }
+      });
+
+      if (coordinates.length === 0) {
+        throw new Error('Aucune coordonnée valide trouvée dans le fichier');
+      }
+
+      const validationResult = validateCoordinatesInFrance(coordinates);
+      
+      logger.info(`Geographic validation completed for file ${fileId}`, {
+        totalCoordinates: coordinates.length,
+        invalidCount: validationResult.invalidCount,
+        bounds: validationResult.bounds
+      });
+
+      return validationResult;
+    } catch (error) {
+      logger.error(`Geographic validation failed for file ${fileId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse un nombre depuis une chaîne en tenant compte du séparateur décimal
+   */
+  private parseNumber(value: string, projection: any): number {
+    if (!value || typeof value !== 'string') return NaN;
+    
+    // Nettoyage de base
+    const cleanValue = value.trim();
+    if (cleanValue === '' || cleanValue === '-') return NaN;
+    
+    // Gestion des séparateurs décimaux (selon le fichier ou la projection)
+    const fileMetadata = Array.from(this.files.values())[0]; // Approximation pour l'exemple
+    const decimalSeparator = fileMetadata?.decimalSeparator || '.';
+    
+    let normalizedValue = cleanValue;
+    if (decimalSeparator === ',') {
+      // Remplacer les virgules par des points pour parseFloat
+      normalizedValue = cleanValue.replace(',', '.');
+    }
+    
+    const parsed = parseFloat(normalizedValue);
+    return parsed;
+  }
+
+  /**
+   * Retourne la description du périmètre géographique supporté
+   */
+  getSupportedGeographicArea(): string {
+    return getFranceCoverageDescription();
   }
 }
 

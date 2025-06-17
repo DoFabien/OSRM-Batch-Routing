@@ -5,10 +5,24 @@ import { jobService } from '@/services/jobService';
 import { osrmService } from '@/services/osrmService';
 import { projectionService } from '@/services/projectionService';
 import { resultService } from '@/services/resultService';
+import { exportService } from '@/services/exportService';
 import { logger } from '@/utils/logger';
 import type { ApiResponse, RouteConfiguration, BatchJob, BatchResult } from '@/types';
 
 const router = Router();
+
+/**
+ * GET /api/routing/test
+ * Test endpoint to verify routing module is working
+ */
+router.get('/test', (req: Request, res: Response) => {
+  logger.info('Test endpoint hit - routing module is working');
+  res.json({ 
+    success: true, 
+    message: 'Routing module is working',
+    timestamp: new Date().toISOString()
+  });
+});
 
 /**
  * POST /api/routing/batch
@@ -269,6 +283,210 @@ router.get('/export/:jobId',
         logger.info(`GeoJSON file streamed successfully for job ${jobId}`);
       }
     });
+  })
+);
+
+/**
+ * GET /api/routing/export/:jobId/:format
+ * Download results in specified format (geojson, geopackage)
+ */
+router.get('/export/:jobId/:format',
+  [
+    param('jobId').isUUID().withMessage('Invalid job ID'),
+    param('format').isIn(['geojson', 'geopackage']).withMessage('Format must be geojson or geopackage')
+  ],
+  asyncHandler(async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      logger.error(`Validation errors for export request:`, errors.array());
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid parameters',
+        errors: errors.array()
+      });
+    }
+
+    const { jobId, format } = req.params;
+    logger.info(`Export request: jobId=${jobId}, format=${format}`);
+    
+    // Check if job exists and is completed
+    const job = jobService.getJob(jobId);
+    if (!job) {
+      logger.error(`Job not found: ${jobId}`);
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found'
+      });
+    }
+
+    logger.info(`Job found: ${jobId}, status=${job.status}`);
+
+    if (job.status !== 'completed') {
+      logger.error(`Job not completed: ${jobId}, current status: ${job.status}`);
+      return res.status(400).json({
+        success: false,
+        error: 'Job not completed yet'
+      });
+    }
+
+    // Get results
+    logger.info(`Getting results for job: ${jobId}`);
+    const results = jobService.generateExport(jobId);
+    if (!results) {
+      logger.error(`No results available for job: ${jobId}`);
+      return res.status(500).json({
+        success: false,
+        error: 'Results not available'
+      });
+    }
+
+    logger.info(`Results found for job ${jobId}: ${results.summary.successful} successful routes`);
+
+    if (format === 'geojson') {
+      // For GeoJSON, try to use existing file first, then fallback to generation
+      const hasFile = await resultService.hasGeoJSONFile(jobId);
+      if (hasFile) {
+        const filePath = resultService.getGeoJSONFilePath(jobId);
+        const filename = `routing_results_${jobId.substring(0, 8)}.geojson`;
+        
+        res.setHeader('Content-Type', 'application/geo+json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        return res.sendFile(filePath);
+      }
+      
+      // Generate GeoJSON in memory (fallback)
+      const tempDir = process.env.TEMP_DIR || '/app/temp';
+      // Ensure temp directory exists
+      const fs = require('fs');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      const outputPath = `${tempDir}/export_${jobId}.geojson`;
+      
+      await exportService.exportBatchResults(results, {
+        format: 'geojson',
+        outputPath
+      });
+      
+      const filename = `routing_results_${jobId.substring(0, 8)}.geojson`;
+      res.setHeader('Content-Type', 'application/geo+json');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      return res.sendFile(outputPath, (error) => {
+        if (error) {
+          logger.error(`Failed to send GeoJSON file:`, error);
+          if (!res.headersSent) {
+            res.status(500).json({ success: false, error: 'Failed to download file' });
+          }
+        }
+        // Cleanup temp file
+        setTimeout(() => {
+          require('fs').unlink(outputPath, () => {});
+        }, 5000);
+      });
+    }
+
+    if (format === 'geopackage') {
+      logger.info(`Starting GeoPackage export for job: ${jobId}`);
+      
+      const tempDir = process.env.TEMP_DIR || '/app/temp';
+      logger.info(`Using temp directory: ${tempDir}`);
+      
+      // Ensure temp directory exists
+      const fs = require('fs');
+      if (!fs.existsSync(tempDir)) {
+        logger.info(`Creating temp directory: ${tempDir}`);
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      const outputPath = `${tempDir}/export_${jobId}.gpkg`;
+      logger.info(`GeoPackage output path: ${outputPath}`);
+      
+      try {
+        // Calculate bounds for metadata
+        logger.info(`Calculating bounds from ${results.results.length} results`);
+        const bounds = {
+          minLat: 90, maxLat: -90,
+          minLon: 180, maxLon: -180
+        };
+        
+        let routesWithGeometry = 0;
+        results.results.forEach(result => {
+          if (result.success && result.route?.geometry) {
+            routesWithGeometry++;
+            result.route.geometry.coordinates.forEach(([lon, lat]) => {
+              bounds.minLat = Math.min(bounds.minLat, lat);
+              bounds.maxLat = Math.max(bounds.maxLat, lat);
+              bounds.minLon = Math.min(bounds.minLon, lon);
+              bounds.maxLon = Math.max(bounds.maxLon, lon);
+            });
+          }
+        });
+        
+        logger.info(`Bounds calculation complete: ${routesWithGeometry} routes with geometry, bounds:`, bounds);
+        
+        logger.info(`Calling exportService.exportBatchResults...`);
+        await exportService.exportBatchResults(results, {
+          format: 'geopackage',
+          outputPath
+        }, {
+          tableName: 'routes',
+          description: `Route calculations for job ${jobId}`,
+          bounds,
+          totalFeatures: results.summary.successful
+        });
+        
+        logger.info(`GeoPackage export completed: ${outputPath}`);
+        
+        // Check if file was created
+        if (!fs.existsSync(outputPath)) {
+          logger.error(`GeoPackage file was not created: ${outputPath}`);
+          return res.status(500).json({
+            success: false,
+            error: 'GeoPackage file was not created'
+          });
+        }
+        
+        const stats = fs.statSync(outputPath);
+        logger.info(`GeoPackage file size: ${stats.size} bytes`);
+        
+        const filename = `routing_results_${jobId.substring(0, 8)}.gpkg`;
+        res.setHeader('Content-Type', 'application/geopackage+sqlite3');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        logger.info(`Sending GeoPackage file: ${outputPath}`);
+        return res.sendFile(outputPath, (error) => {
+          if (error) {
+            logger.error(`Failed to send GeoPackage file:`, error);
+            if (!res.headersSent) {
+              res.status(500).json({ success: false, error: 'Failed to download file' });
+            }
+          } else {
+            logger.info(`GeoPackage file sent successfully: ${filename}`);
+          }
+          // Cleanup temp file
+          setTimeout(() => {
+            require('fs').unlink(outputPath, (unlinkError: any) => {
+              if (unlinkError) {
+                logger.warn(`Failed to cleanup temp file ${outputPath}:`, unlinkError);
+              } else {
+                logger.info(`Cleaned up temp file: ${outputPath}`);
+              }
+            });
+          }, 5000);
+        });
+        
+      } catch (error) {
+        logger.error(`Failed to generate GeoPackage for job ${jobId}:`, error);
+        logger.error(`Error stack:`, (error as Error).stack);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to generate GeoPackage file',
+          details: (error as Error).message
+        });
+      }
+    }
+
   })
 );
 

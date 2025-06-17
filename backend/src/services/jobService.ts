@@ -4,6 +4,7 @@ import { fileService } from './fileService';
 import { projectionService } from './projectionService';
 import { osrmService } from './osrmService';
 import { resultService } from './resultService';
+import { exportService } from './exportService';
 import type { BatchJob, RouteConfiguration, RouteResult, BatchResult, WebSocketMessage } from '@/types';
 
 export class JobService {
@@ -103,15 +104,76 @@ export class JobService {
         throw new Error('Failed to read file data');
       }
 
+      // Create GeoPackage if output format is geopackage
+      let geoPackagePath: string | undefined;
+      if (job.configuration.outputFormat === 'geopackage') {
+        // Get CSV headers from first row
+        const csvHeaders = fileData.length > 0 ? Object.keys(fileData[0]) : [];
+        
+        geoPackagePath = await exportService.createJobGeoPackage(jobId, csvHeaders, {
+          tableName: 'routes',
+          description: `Route calculations for job ${jobId}`
+        });
+        
+        // Store the GeoPackage path in the job
+        job.geoPackagePath = geoPackagePath;
+        this.jobs.set(jobId, job);
+      }
+
       const results: RouteResult[] = [];
       const batchSize = parseInt(process.env['BATCH_SIZE'] || '100'); // Optimized batch size for performance
+      const geoPackageBatchSize = parseInt(process.env['GEOPACKAGE_BATCH_SIZE'] || '500'); // Batch size for GeoPackage insertions
+      let pendingGeoPackageResults: RouteResult[] = [];
+
+      // Helper function to add result (to array and batch for GeoPackage)
+      const addResult = async (result: RouteResult) => {
+        results.push(result);
+        
+        // If GeoPackage is configured, add to pending batch
+        if (geoPackagePath) {
+          pendingGeoPackageResults.push(result);
+          
+          // Insert batch when it reaches the threshold
+          if (pendingGeoPackageResults.length >= geoPackageBatchSize) {
+            try {
+              await exportService.insertBatchRouteResults(geoPackagePath, pendingGeoPackageResults);
+              pendingGeoPackageResults = []; // Clear the batch
+            } catch (error) {
+              logger.warn(`Failed to insert batch into GeoPackage: ${error}`);
+              pendingGeoPackageResults = []; // Clear even on error to avoid memory buildup
+            }
+          }
+        }
+      };
+
+      // Helper function to flush remaining GeoPackage results
+      const flushGeoPackageResults = async () => {
+        if (geoPackagePath && pendingGeoPackageResults.length > 0) {
+          try {
+            await exportService.insertBatchRouteResults(geoPackagePath, pendingGeoPackageResults);
+            pendingGeoPackageResults = [];
+          } catch (error) {
+            logger.warn(`Failed to insert final batch into GeoPackage: ${error}`);
+          }
+        }
+      };
 
       // Process data in batches
       for (let i = 0; i < fileData.length; i += batchSize) {
         const batch = fileData.slice(i, i + batchSize);
         
         // Extract and validate coordinates for this batch
-        const batchCoordinates = batch.map((row, batchIndex) => {
+        const batchCoordinates: Array<{
+          rowIndex: number;
+          originalData: Record<string, string>;
+          originX: number;
+          originY: number;
+          destX: number;
+          destY: number;
+        }> = [];
+        
+        for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+          const row = batch[batchIndex];
           const rowIndex = i + batchIndex;
           
           try {
@@ -132,25 +194,25 @@ export class JobService {
               throw new Error('Invalid coordinate values');
             }
 
-            return {
+            batchCoordinates.push({
               rowIndex,
               originalData: row,
               originX,
               originY,
               destX,
               destY
-            };
+            });
           } catch (error) {
             // Add failed result immediately
-            results.push({
+            const failedResult = {
               rowIndex,
               originalData: row,
               success: false,
               error: `Coordinate extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-            });
-            return null;
+            };
+            await addResult(failedResult);
           }
-        }).filter(coord => coord !== null);
+        }
 
         if (batchCoordinates.length === 0) {
           // Update progress for skipped batch
@@ -160,44 +222,49 @@ export class JobService {
 
         // Transform coordinates to WGS84
         const transformedOrigins = projectionService.transformBatch(
-          batchCoordinates.map(c => ({ x: c!.originX, y: c!.originY, rowIndex: c!.rowIndex, originalData: c!.originalData })),
+          batchCoordinates.map(c => ({ x: c.originX, y: c.originY, rowIndex: c.rowIndex, originalData: c.originalData })),
           job.configuration.projection
         );
 
         const transformedDestinations = projectionService.transformBatch(
-          batchCoordinates.map(c => ({ x: c!.destX, y: c!.destY, rowIndex: c!.rowIndex, originalData: c!.originalData })),
+          batchCoordinates.map(c => ({ x: c.destX, y: c.destY, rowIndex: c.rowIndex, originalData: c.originalData })),
           job.configuration.projection
         );
 
         // Prepare routing requests
-        const routingRequests = batchCoordinates.map(coord => {
-          const origin = transformedOrigins.find(o => o.rowIndex === coord!.rowIndex);
-          const destination = transformedDestinations.find(d => d.rowIndex === coord!.rowIndex);
+        const routingRequests = [];
+        for (const coord of batchCoordinates) {
+          const origin = transformedOrigins.find(o => o.rowIndex === coord.rowIndex);
+          const destination = transformedDestinations.find(d => d.rowIndex === coord.rowIndex);
 
           if (!origin?.success || !destination?.success) {
-            results.push({
-              rowIndex: coord!.rowIndex,
-              originalData: coord!.originalData,
+            await addResult({
+              rowIndex: coord.rowIndex,
+              originalData: coord.originalData,
               success: false,
               error: 'Coordinate transformation failed'
             });
-            return null;
+            continue;
           }
 
-          return {
-            rowIndex: coord!.rowIndex,
-            originalData: coord!.originalData,
+          routingRequests.push({
+            rowIndex: coord.rowIndex,
+            originalData: coord.originalData,
             originLng: origin.longitude,
             originLat: origin.latitude,
             destLng: destination.longitude,
             destLat: destination.latitude
-          };
-        }).filter(req => req !== null);
+          });
+        }
 
         if (routingRequests.length > 0) {
           // Calculate routes
           const routeResults = await osrmService.calculateBatchRoutes(routingRequests);
-          results.push(...routeResults);
+          
+          // Add each result (to array and GeoPackage if configured)
+          for (const routeResult of routeResults) {
+            await addResult(routeResult);
+          }
           
           // Update progress
           const successful = routeResults.filter(r => r.success).length;
@@ -211,10 +278,11 @@ export class JobService {
         this.sendProgressUpdate(jobId);
       }
 
+      // Flush any remaining GeoPackage results
+      await flushGeoPackageResults();
+
       // Store results in memory and save to disk
       this.jobResults.set(jobId, results);
-      
-      logger.info(`Storing ${results.length} results for job ${jobId}`);
       
       // Calculate summary for GeoJSON
       const successful = results.filter(r => r.success);
@@ -238,7 +306,6 @@ export class JobService {
       // Save GeoJSON to disk using streaming
       try {
         await resultService.saveGeoJSONResults(jobId, results, summary, job.configuration, job);
-        logger.info(`GeoJSON saved to disk for job ${jobId}`);
       } catch (error) {
         logger.error(`Failed to save GeoJSON for job ${jobId}:`, error);
         // Continue with job completion even if file save fails
@@ -358,8 +425,6 @@ export class JobService {
       return false;
     }
     
-    logger.info(`Cancelling job ${jobId}`);
-    
     // Update job status
     this.updateJobStatus(jobId, 'failed', 'Job cancelled by user');
     
@@ -371,7 +436,6 @@ export class JobService {
       const hasFile = await resultService.hasGeoJSONFile(jobId);
       if (hasFile) {
         await resultService.deleteGeoJSONFile(jobId);
-        logger.info(`Deleted GeoJSON file for cancelled job ${jobId}`);
       }
     } catch (error) {
       logger.error(`Failed to delete GeoJSON file for job ${jobId}:`, error);
@@ -379,8 +443,6 @@ export class JobService {
     
     // Send cancellation update via WebSocket
     this.sendStatusUpdate(jobId, 'failed');
-    
-    logger.info(`Job ${jobId} cancelled and cleaned up successfully`);
     return true;
   }
 
@@ -472,13 +534,10 @@ export class JobService {
         return false;
       }
 
-      logger.info(`Cleaning up job ${jobId}`);
-
       // Clean up associated file
       if (job.fileId) {
         try {
           await fileService.deleteFile(job.fileId);
-          logger.info(`Deleted file ${job.fileId} for job ${jobId}`);
         } catch (error) {
           logger.warn(`Failed to cleanup file ${job.fileId} for job ${jobId}:`, error);
         }
@@ -489,7 +548,6 @@ export class JobService {
         const hasFile = await resultService.hasGeoJSONFile(jobId);
         if (hasFile) {
           await resultService.deleteGeoJSONFile(jobId);
-          logger.info(`Deleted GeoJSON file for job ${jobId}`);
         }
       } catch (error) {
         logger.error(`Failed to delete GeoJSON file for job ${jobId}:`, error);
@@ -498,8 +556,6 @@ export class JobService {
       // Remove job and results from memory
       this.jobs.delete(jobId);
       this.jobResults.delete(jobId);
-
-      logger.info(`Job ${jobId} cleaned up successfully`);
       return true;
 
     } catch (error) {
@@ -527,7 +583,6 @@ export class JobService {
       setTimeout(() => {
         this.jobs.delete(jobId);
         this.jobResults.delete(jobId);
-        logger.info(`Immediate cleanup completed for job ${jobId}`);
       }, 30000); // 30 second delay to allow download
 
     } catch (error) {

@@ -14,6 +14,22 @@ export interface CoordinateAnalysis {
   suggestedType: 'originX' | 'originY' | 'destX' | 'destY' | 'unknown';
 }
 
+export interface GeographicBounds {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+}
+
+export interface GeographicValidationResult {
+  isValid: boolean;
+  inFranceBounds: boolean;
+  outOfBoundsCount: number;
+  totalCoordinates: number;
+  bounds: GeographicBounds;
+  warnings: string[];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -312,5 +328,125 @@ export class CoordinateDetectionService {
 
     console.log('Final auto-selection:', result);
     return result;
+  }
+
+  /**
+   * Bounds géographiques de la France métropolitaine + Corse
+   */
+  private readonly FRANCE_BOUNDS: GeographicBounds = {
+    minLat: 41.0,
+    maxLat: 51.5,
+    minLon: -5.5,
+    maxLon: 10.0
+  };
+
+  /**
+   * Valide si les coordonnées analysées sont dans le périmètre France
+   */
+  validateGeographicBounds(analyses: CoordinateAnalysis[]): GeographicValidationResult {
+    const warnings: string[] = [];
+    let outOfBoundsCount = 0;
+    let totalCoordinates = 0;
+    
+    // Calculer les bounds réelles des données
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLon = Infinity, maxLon = -Infinity;
+
+    // Analyser les champs de coordonnées détectés
+    analyses.forEach(analysis => {
+      if (analysis.coordinateScore >= 50 && analysis.sampleValues.length > 0) {
+        analysis.sampleValues.forEach(value => {
+          if (value !== null) {
+            totalCoordinates++;
+            
+            // Mettre à jour les bounds
+            if (analysis.coordinateRange === 'latitude' || 
+                (analysis.coordinateRange === 'both' && Math.abs(value) <= 90)) {
+              minLat = Math.min(minLat, value);
+              maxLat = Math.max(maxLat, value);
+              
+              // Vérifier si hors bounds France
+              if (value < this.FRANCE_BOUNDS.minLat || value > this.FRANCE_BOUNDS.maxLat) {
+                outOfBoundsCount++;
+              }
+            }
+            
+            if (analysis.coordinateRange === 'longitude' || 
+                (analysis.coordinateRange === 'both' && Math.abs(value) > 90)) {
+              minLon = Math.min(minLon, value);
+              maxLon = Math.max(maxLon, value);
+              
+              // Vérifier si hors bounds France
+              if (value < this.FRANCE_BOUNDS.minLon || value > this.FRANCE_BOUNDS.maxLon) {
+                outOfBoundsCount++;
+              }
+            }
+          }
+        });
+      }
+    });
+
+    // Construire les bounds finaux
+    const bounds: GeographicBounds = {
+      minLat: minLat === Infinity ? 0 : minLat,
+      maxLat: maxLat === -Infinity ? 0 : maxLat,
+      minLon: minLon === Infinity ? 0 : minLon,
+      maxLon: maxLon === -Infinity ? 0 : maxLon
+    };
+
+    // Vérifier la compatibilité globale
+    const inFranceBounds = this.checkBoundsCompatibility(bounds, warnings);
+
+    return {
+      isValid: totalCoordinates > 0,
+      inFranceBounds,
+      outOfBoundsCount,
+      totalCoordinates,
+      bounds,
+      warnings
+    };
+  }
+
+  /**
+   * Vérifie si des bounds sont compatibles avec la France
+   */
+  private checkBoundsCompatibility(bounds: GeographicBounds, warnings: string[]): boolean {
+    let compatible = true;
+
+    if (bounds.minLat < this.FRANCE_BOUNDS.minLat - 1) {
+      compatible = false;
+      warnings.push(`Latitude minimale trop basse: ${bounds.minLat.toFixed(2)}° (France: ${this.FRANCE_BOUNDS.minLat}°+)`);
+    }
+
+    if (bounds.maxLat > this.FRANCE_BOUNDS.maxLat + 1) {
+      compatible = false;
+      warnings.push(`Latitude maximale trop haute: ${bounds.maxLat.toFixed(2)}° (France: ${this.FRANCE_BOUNDS.maxLat}°-)`);
+    }
+
+    if (bounds.minLon < this.FRANCE_BOUNDS.minLon - 1) {
+      compatible = false;
+      warnings.push(`Longitude minimale trop basse: ${bounds.minLon.toFixed(2)}° (France: ${this.FRANCE_BOUNDS.minLon}°+)`);
+    }
+
+    if (bounds.maxLon > this.FRANCE_BOUNDS.maxLon + 1) {
+      compatible = false;
+      warnings.push(`Longitude maximale trop haute: ${bounds.maxLon.toFixed(2)}° (France: ${this.FRANCE_BOUNDS.maxLon}°-)`);
+    }
+
+    return compatible;
+  }
+
+  /**
+   * Retourne la description du périmètre géographique supporté
+   */
+  getSupportedGeographicArea(): string {
+    return `France métropolitaine et Corse (latitude: ${this.FRANCE_BOUNDS.minLat}° - ${this.FRANCE_BOUNDS.maxLat}°N, longitude: ${this.FRANCE_BOUNDS.minLon}° - ${this.FRANCE_BOUNDS.maxLon}°E)`;
+  }
+
+  /**
+   * Retourne les bounds de la France
+   */
+  getFranceBounds(): GeographicBounds {
+    return { ...this.FRANCE_BOUNDS };
   }
 }

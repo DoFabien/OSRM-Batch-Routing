@@ -42,6 +42,7 @@ COPY --from=backend-builder --chown=node:node /app/backend/dist ./backend/dist
 COPY --from=backend-prod-deps --chown=node:node /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder --chown=node:node /app/backend/package.json ./backend/
 COPY --from=backend-builder --chown=node:node /app/backend/src/data ./backend/dist/data
+COPY --from=backend-builder --chown=node:node /app/backend/src/resources ./backend/dist/resources
 
 # Copy frontend built files
 COPY --from=frontend-builder --chown=node:node /app/frontend/dist/frontend ./frontend/dist/browser

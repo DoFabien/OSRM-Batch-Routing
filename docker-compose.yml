@@ -23,6 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: osrm-batch-routing
+    user: "1000:1000"
     ports:
       - "8888:80"
     environment:
@@ -32,6 +33,7 @@ services:
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - LOG_DIR=${LOG_DIR:-/app/logs}
       - RESULTS_DIR=${RESULTS_DIR:-/app/results}
+      - TEMP_DIR=${TEMP_DIR:-/app/temp}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - MAX_FILE_SIZE=${MAX_FILE_SIZE:-52428800}
       - MAX_FILES_KEPT=${MAX_FILES_KEPT:-50}
@@ -42,6 +44,7 @@ services:
       - ${HOST_UPLOAD_DIR:-./uploads}:/app/uploads
       - ${HOST_LOG_DIR:-./logs}:/app/logs
       - ${HOST_RESULTS_DIR:-./results}:/app/results
+      - ${HOST_TEMP_DIR:-./temp}:/app/temp
     depends_on:
       - osrm
     networks:

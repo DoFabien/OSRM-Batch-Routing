@@ -43,6 +43,11 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
           <p><strong>Columns:</strong> {{ fileData.headers.join(', ') }}</p>
         </div>
 
+        <!-- Geographic coverage info -->
+        <div class="geographic-info">
+          <p><mat-icon>location_on</mat-icon> <strong>Geographic coverage:</strong> France métropolitaine and Corsica</p>
+        </div>
+
         <div class="config-section">
           <mat-form-field appearance="outline">
             <mat-label>Coordinate System</mat-label>
@@ -106,34 +111,91 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
           <p><strong>Proj4:</strong> <code>{{ selectedProjection.proj4 }}</code></p>
         </div>
 
+        <div class="output-format-options">
+          <h4>
+            <mat-icon>file_download</mat-icon>
+            Output Format
+          </h4>
+          
+          <div class="format-selection">
+            <mat-form-field appearance="outline">
+              <mat-label>Export Format</mat-label>
+              <mat-select [(value)]="selectedOutputFormat">
+                <mat-option value="geojson">
+                  <mat-icon>map</mat-icon>
+                  GeoJSON (.geojson)
+                </mat-option>
+                <mat-option value="geopackage">
+                  <mat-icon>archive</mat-icon>
+                  GeoPackage (.gpkg)
+                </mat-option>
+              </mat-select>
+              <mat-hint>Choose the format for your routing results</mat-hint>
+            </mat-form-field>
+          </div>
+          
+          <div class="format-info">
+            <div *ngIf="selectedOutputFormat === 'geojson'" class="format-description">
+              <mat-icon color="primary">info</mat-icon>
+              <span><strong>GeoJSON:</strong> Standard web format, compatible with most GIS tools and web mapping libraries.</span>
+            </div>
+            <div *ngIf="selectedOutputFormat === 'geopackage'" class="format-description">
+              <mat-icon color="primary">info</mat-icon>
+              <span><strong>GeoPackage:</strong> SQLite-based format, ideal for desktop GIS applications and large datasets.</span>
+            </div>
+          </div>
+        </div>
+
         <div class="geometry-options">
-          <h4>Export Options</h4>
-          <mat-form-field appearance="outline">
-            <mat-label>Geometry Type</mat-label>
-            <mat-select [(value)]="geometryType">
-              <mat-option value="complete">
-                <mat-icon>route</mat-icon>
-                Complete Geometry
-              </mat-option>
-              <mat-option value="simplified">
-                <mat-icon>show_chart</mat-icon>
-                Simplified Geometry
-              </mat-option>
-              <mat-option value="line">
+          <h4>
+            <mat-icon>tune</mat-icon>
+            Geometry Options
+          </h4>
+          
+          <!-- Simplification buttons -->
+          <div class="simplification-control">
+            <h5>Geometry Type and Level</h5>
+            <div class="simplification-buttons">
+              <button mat-raised-button 
+                      (click)="setSimplificationLevel(0)"
+                      [class]="'simplification-btn' + (simplificationLevel === 0 ? ' selected' : '')">
+                <mat-icon>grain</mat-icon>
+                No Simplification
+              </button>
+              
+              <button mat-raised-button 
+                      (click)="setSimplificationLevel(1)"
+                      [class]="'simplification-btn' + (simplificationLevel === 1 ? ' selected' : '')">
+                <mat-icon>location_on</mat-icon>
+                Light (1m)
+              </button>
+              
+              <button mat-raised-button 
+                      (click)="setSimplificationLevel(2)"
+                      [class]="'simplification-btn' + (simplificationLevel === 2 ? ' selected' : '')">
+                <mat-icon>adjust</mat-icon>
+                Medium (10m)
+              </button>
+              
+              <button mat-raised-button 
+                      (click)="setSimplificationLevel(3)"
+                      [class]="'simplification-btn' + (simplificationLevel === 3 ? ' selected' : '')">
+                <mat-icon>compress</mat-icon>
+                Strong (50m)
+              </button>
+              
+              <button mat-raised-button 
+                      (click)="setSimplificationLevel(4)"
+                      [class]="'simplification-btn' + (simplificationLevel === 4 ? ' selected' : '')">
                 <mat-icon>timeline</mat-icon>
                 Straight Line
-              </mat-option>
-            </mat-select>
-            <mat-hint>Choose how to export route geometries</mat-hint>
-          </mat-form-field>
-
-          <div *ngIf="geometryType === 'simplified'" class="simplification-settings">
-            <mat-form-field appearance="outline">
-              <mat-label>Simplification Tolerance</mat-label>
-              <input matInput type="number" [(ngModel)]="simplificationTolerance" 
-                     min="0.00001" max="0.01" step="0.00001">
-              <mat-hint>Higher values = more simplification (0.0001 recommended)</mat-hint>
-            </mat-form-field>
+              </button>
+            </div>
+            
+            <div class="simplification-info">
+              <p><strong>Current:</strong> {{ getSimplificationDescription() }}</p>
+              <p class="help-text">{{ getSimplificationHelp() }}</p>
+            </div>
           </div>
         </div>
       </mat-card-content>
@@ -214,17 +276,170 @@ import { CoordinateDetectionService, CoordinateAnalysis } from '../../services/c
     }
 
     .geometry-options h4 {
-      margin-bottom: 1rem;
+      margin-bottom: 1.5rem;
       color: #333;
+      display: flex;
+      align-items: center;
     }
 
-    .simplification-settings {
-      margin-top: 1rem;
+    .geometry-options h4 mat-icon {
+      margin-right: 0.5rem;
+    }
+
+    .simplification-control {
+      margin-bottom: 2rem;
+    }
+
+    .simplification-control h5 {
+      margin: 0 0 1rem 0;
+      color: #555;
+      font-weight: 500;
+    }
+
+    .simplification-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 1rem 0;
+    }
+
+    .simplification-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1rem 0.75rem;
+      min-width: 120px;
+      height: auto;
+      flex: 1;
+      font-size: 0.875rem;
+      transition: all 0.3s ease;
+      border-radius: 8px;
+    }
+
+    .simplification-btn mat-icon {
+      margin-bottom: 0.5rem;
+      font-size: 1.5rem;
+    }
+
+    .simplification-btn.selected {
+      background-color: #1976d2 !important;
+      color: white !important;
+      box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3) !important;
+      transform: translateY(-2px) !important;
+      border: 2px solid #1976d2 !important;
+    }
+
+    .simplification-btn:not(.selected) {
+      background-color: #f5f5f5 !important;
+      color: #666 !important;
+      border: 2px solid transparent !important;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+    }
+
+    .simplification-btn:not(.selected):hover {
+      background-color: #e0e0e0 !important;
+      transform: translateY(-1px) !important;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .simplification-info {
+      background-color: #f8f9fa;
+      padding: 1rem;
+      border-radius: 4px;
+      border-left: 3px solid #1976d2;
+    }
+
+    .simplification-info p {
+      margin: 0.25rem 0;
+    }
+
+    .simplification-info .help-text {
+      color: #666;
+      font-size: 0.875rem;
+    }
+
+    .geometry-type-control {
+      margin-top: 1.5rem;
+    }
+
+    .geographic-info {
+      background-color: #f3e5f5;
+      padding: 0.75rem 1rem;
+      border-radius: 4px;
+      margin-bottom: 1.5rem;
+      border-left: 4px solid #9c27b0;
+    }
+
+    .geographic-info p {
+      margin: 0;
+      color: #7b1fa2;
+      display: flex;
+      align-items: center;
+    }
+
+    .geographic-info mat-icon {
+      margin-right: 0.5rem;
+    }
+
+    .output-format-options {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .output-format-options h4 {
+      margin-bottom: 1.5rem;
+      color: #333;
+      display: flex;
+      align-items: center;
+    }
+
+    .output-format-options h4 mat-icon {
+      margin-right: 0.5rem;
+    }
+
+    .format-selection {
+      margin-bottom: 1.5rem;
+    }
+
+    .format-info {
+      background-color: #f8f9fa;
+      padding: 1rem;
+      border-radius: 4px;
+      border-left: 3px solid #1976d2;
+    }
+
+    .format-description {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+
+    .format-description mat-icon {
+      margin-top: 0.1rem;
+      font-size: 1.2rem;
     }
 
     @media (max-width: 768px) {
       .coordinate-fields {
         grid-template-columns: 1fr;
+      }
+      
+      .simplification-buttons {
+        flex-direction: column;
+      }
+      
+      .simplification-btn {
+        min-width: auto;
+        flex-direction: row;
+        justify-content: flex-start;
+        padding: 0.75rem 1rem;
+      }
+      
+      .simplification-btn mat-icon {
+        margin-bottom: 0;
+        margin-right: 0.5rem;
+        font-size: 1.25rem;
       }
     }
   `]
@@ -248,8 +463,11 @@ export class RoutingConfigComponent implements OnInit, OnChanges {
   isAnalyzing = false;
   
   // Geometry options
-  geometryType: 'complete' | 'simplified' | 'line' = 'complete';
-  simplificationTolerance = 0.0001;
+  simplificationLevel: number = 2; // 0=Sans, 1=Faible(1m), 2=Moyen(10m), 3=Fort(50m), 4=Ligne droite
+  
+  // Output format
+  selectedOutputFormat: string = 'geojson';
+
 
   constructor(
     private apiService: ApiService,
@@ -352,6 +570,7 @@ export class RoutingConfigComponent implements OnInit, OnChanges {
           destY: this.destY
         });
 
+
       } else {
         console.warn('Could not get file sample, using header-based detection');
         this.fallbackToHeaderDetection();
@@ -436,10 +655,11 @@ export class RoutingConfigComponent implements OnInit, OnChanges {
       },
       geometryOptions: {
         exportGeometry: true,
-        straightLineGeometry: this.geometryType === 'line',
-        simplifyGeometry: this.geometryType === 'simplified',
-        simplificationTolerance: this.geometryType === 'simplified' ? this.simplificationTolerance : undefined
-      }
+        straightLineGeometry: this.simplificationLevel === 4, // Ligne droite
+        simplifyGeometry: this.simplificationLevel > 0 && this.simplificationLevel < 4, // Simplifier sauf sans simplification et ligne droite
+        simplificationTolerance: this.getSimplificationTolerance()
+      },
+      outputFormat: this.selectedOutputFormat
     };
 
     this.processing = true;
@@ -465,5 +685,61 @@ export class RoutingConfigComponent implements OnInit, OnChanges {
         });
       }
     });
+  }
+
+
+  /**
+   * Sets the simplification level and updates the interface
+   */
+  setSimplificationLevel(level: number) {
+    this.simplificationLevel = level;
+  }
+
+  /**
+   * Returns the simplification tolerance based on the selected level
+   */
+  getSimplificationTolerance(): number {
+    switch (this.simplificationLevel) {
+      case 0: return 0;        // No simplification
+      case 1: return 0.00001;  // Light - 1m
+      case 2: return 0.0001;   // Medium - 10m  
+      case 3: return 0.0005;   // Strong - 50m
+      case 4: return 0;        // Straight line (no simplification as different geometry)
+      default: return 0.0001;
+    }
+  }
+
+  /**
+   * Returns the description of the current simplification level
+   */
+  getSimplificationDescription(): string {
+    switch (this.simplificationLevel) {
+      case 0: return 'No simplification - Full detailed geometry';
+      case 1: return 'Light simplification (1m) - Very precise geometry';
+      case 2: return 'Medium simplification (10m) - Balance between detail/performance';
+      case 3: return 'Strong simplification (50m) - Lightweight geometry';
+      case 4: return 'Straight line - Direct connection between points';
+      default: return 'Unknown level';
+    }
+  }
+
+  /**
+   * Returns contextual help for the simplification level
+   */
+  getSimplificationHelp(): string {
+    switch (this.simplificationLevel) {
+      case 0: 
+        return 'Preserves all details of the route calculated by OSRM. Largest files but exact geometry.';
+      case 1: 
+        return 'Very light simplification while maintaining high precision. Recommended for detailed analysis.';
+      case 2: 
+        return 'Good compromise between precision and file size. Recommended for most use cases.';
+      case 3: 
+        return 'Significant simplification to greatly reduce file sizes. Suitable for general visualizations.';
+      case 4: 
+        return 'Draws a straight line between origin and destination. Useful for as-the-crow-flies distances or quick analysis.';
+      default: 
+        return '';
+    }
   }
 }
